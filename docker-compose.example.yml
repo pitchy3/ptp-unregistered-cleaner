@@ -1,0 +1,12 @@
+services:
+  ptp-unregistered-cleaner:
+    build: .
+    container_name: ptp-unregistered-cleaner
+    env_file: .env
+    environment:
+      PTP_CONFIG_PATH: /config/config.yaml
+      # Optional: set RUN_ONCE=true in .env to run once and exit.
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./data:/data
+    restart: unless-stopped
