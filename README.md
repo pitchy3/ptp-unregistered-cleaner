@@ -64,7 +64,7 @@
 5. Run with Docker Compose:
 
    ```bash
-   docker compose -f docker-compose.example.yml up --build
+   docker compose up --build
    ```
 
 6. Review dry-run logs. Only set `dry_run: false` after confirming matches are correct.
@@ -166,7 +166,7 @@ PTP_CONFIG_PATH=./config.yaml ptp-unregistered-cleaner daemon
 Docker defaults to daemon mode:
 
 ```bash
-docker compose -f docker-compose.example.yml up -d --build
+docker compose up -d --build
 ```
 
 The daemon sleeps for `interval_days` between runs. Do not set this to a rapid polling interval.
