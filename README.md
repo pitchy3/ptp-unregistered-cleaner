@@ -189,6 +189,10 @@ HTTP 400 may indicate malformed API credentials. Confirm `PTP_API_USER` and `PTP
 
 HTTP 401 may indicate API privileges are disabled. Confirm the account/API settings permit API access.
 
+### PTP 302
+
+PTP 302 means the request was redirected, commonly because API credentials were rejected, API privileges are disabled, or the request was not authenticated as an API request. Confirm `PTP_API_USER`, `PTP_API_KEY`, and the account/API settings permit API access. This app sends PTP credentials as HTTP headers (`ApiUser` and `ApiKey`), not query parameters.
+
 ### qBittorrent auth failure
 
 Verify the qBittorrent Web UI URL, username, and password. Make sure the username and password are provided via environment variables and interpolated into `config.yaml`.

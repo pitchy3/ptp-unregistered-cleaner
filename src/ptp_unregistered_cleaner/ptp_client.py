@@ -6,11 +6,22 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from .config import Credentials, PtpConfig
 
 LOGGER = logging.getLogger(__name__)
+
+_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+_SENSITIVE_QUERY_PARAMS = {
+    "apiuser",
+    "apikey",
+    "passkey",
+    "token",
+    "password",
+    "sid",
+    "auth",
+}
 
 
 class PtpClientError(RuntimeError):
@@ -119,12 +130,14 @@ class PtpClient:
             "type": "json",
             self.config.page_parameter: page,
         }
-        # PTP API credentials are attached in one central place. Do not log these params.
-        params.update(
-            {"ApiUser": self.credentials.ptp_api_user, "ApiKey": self.credentials.ptp_api_key}
-        )
+        # PTP requires API credentials in request headers, not query parameters.
+        # Do not log these headers.
+        headers = {
+            "ApiUser": self.credentials.ptp_api_user,
+            "ApiKey": self.credentials.ptp_api_key,
+        }
         try:
-            response = client.get(self.url, params=params)
+            response = client.get(self.url, params=params, headers=headers)
         except Exception as exc:
             import httpx
 
@@ -137,6 +150,18 @@ class PtpClient:
                     f"HTTP error querying PTP unregistered API page {page}: {exc}"
                 ) from exc
             raise
+
+        if response.status_code in _REDIRECT_STATUS_CODES:
+            location = response.headers.get("Location")
+            location_hint = (
+                f" Redirect Location: {_sanitize_url_query(location)}." if location else ""
+            )
+            raise PtpClientError(
+                f"PTP redirected the API request with HTTP {response.status_code} for page {page}. "
+                "This usually means credentials were rejected, API access is disabled, or "
+                "the request was treated like normal website traffic. Confirm PTP_API_USER, "
+                f"PTP_API_KEY, and API privileges.{location_hint}"
+            )
 
         if response.status_code != 200:
             hint = ""
@@ -155,6 +180,18 @@ class PtpClient:
         if not isinstance(payload, dict):
             raise PtpClientError("PTP API JSON response was not an object")
         return payload
+
+
+def _sanitize_url_query(url: str) -> str:
+    parts = urlsplit(url)
+    sanitized_query = urlencode(
+        [
+            (key, "***" if key.lower() in _SENSITIVE_QUERY_PARAMS else value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        ],
+        safe="*",
+    )
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, sanitized_query, parts.fragment))
 
 
 def _int_or_default(value: Any, default: int) -> int:
