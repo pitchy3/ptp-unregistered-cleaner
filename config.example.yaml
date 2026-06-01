@@ -1,0 +1,29 @@
+app:
+  interval_days: 3
+  run_on_startup: true
+  dry_run: true
+  max_deletes_per_run: 25
+  state_path: /data/state.json
+
+ptp:
+  base_url: https://passthepopcorn.me
+  unregistered_path: /userhistory.php
+  timeout_seconds: 30
+  min_interval_seconds_between_pages: 5
+
+matching:
+  require_tracker_contains: "passthepopcorn"
+  include_categories: []
+  exclude_categories: []
+  include_tags: []
+  exclude_tags: []
+
+qbittorrent:
+  - name: main
+    url: http://qbittorrent:8080
+    username: ${QBIT_MAIN_USERNAME}
+    password: ${QBIT_MAIN_PASSWORD}
+  - name: seedbox
+    url: https://example.invalid
+    username: ${QBIT_SEEDBOX_USERNAME}
+    password: ${QBIT_SEEDBOX_PASSWORD}
