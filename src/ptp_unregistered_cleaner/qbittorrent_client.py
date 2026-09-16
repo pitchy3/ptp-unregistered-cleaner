@@ -68,7 +68,7 @@ class QBittorrentClient:
     def list_torrents(self) -> list[Torrent]:
         self._ensure_login()
         response = self._request("GET", "/api/v2/torrents/info")
-        data = response.json()
+        data = self._decode_json(response, "torrent list")
         if not isinstance(data, list):
             raise QBittorrentClientError(
                 f"qBittorrent torrent list for instance {self.config.name} was not an array"
@@ -93,7 +93,7 @@ class QBittorrentClient:
     def get_trackers(self, torrent_hash: str) -> list[Tracker]:
         self._ensure_login()
         response = self._request("GET", "/api/v2/torrents/trackers", params={"hash": torrent_hash})
-        data = response.json()
+        data = self._decode_json(response, "tracker list")
         if not isinstance(data, list):
             return []
         return [Tracker(url=str(item.get("url", ""))) for item in data if isinstance(item, dict)]
@@ -131,8 +131,24 @@ class QBittorrentClient:
             raise QBittorrentClientError(
                 f"qBittorrent auth failure for instance {self.config.name}"
             )
-        response.raise_for_status()
+        import httpx
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise QBittorrentClientError(
+                f"qBittorrent request failed for instance {self.config.name}: "
+                f"HTTP {response.status_code}"
+            ) from exc
         return response
+
+    def _decode_json(self, response: Any, response_name: str) -> Any:
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise QBittorrentClientError(
+                f"qBittorrent {response_name} for instance {self.config.name} was not valid JSON"
+            ) from exc
 
 
 def _parse_tags(value: Any) -> list[str]:

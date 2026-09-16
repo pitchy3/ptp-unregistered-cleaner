@@ -1,7 +1,9 @@
+import pytest
+
 from ptp_unregistered_cleaner.config import MatchingConfig
 from ptp_unregistered_cleaner.matcher import Match, find_matches, remove_matches, torrent_allowed
 from ptp_unregistered_cleaner.ptp_client import UnregisteredTorrent
-from ptp_unregistered_cleaner.qbittorrent_client import Torrent, Tracker
+from ptp_unregistered_cleaner.qbittorrent_client import QBittorrentClientError, Torrent, Tracker
 
 
 class FakeClient:
@@ -79,3 +81,33 @@ def test_tracker_verification_failure_skips_delete() -> None:
     assert removed == []
     assert skipped[0][1].startswith("tracker verification failed")
     assert client.deleted == []
+
+
+def test_partial_results_are_available_if_a_later_delete_fails() -> None:
+    class PartiallyFailingClient(FakeClient):
+        def delete_torrent(self, torrent_hash: str) -> None:
+            if torrent_hash == "def":
+                raise QBittorrentClientError("connection lost")
+            super().delete_torrent(torrent_hash)
+
+    client = PartiallyFailingClient()
+    matches = [
+        Match("main", Torrent(hash="abc", name="one"), UnregisteredTorrent("abc")),
+        Match("main", Torrent(hash="def", name="two"), UnregisteredTorrent("def")),
+    ]
+    removed: list[Match] = []
+    skipped: list[tuple[Match, str]] = []
+
+    with pytest.raises(QBittorrentClientError):
+        remove_matches(
+            client,
+            matches,
+            dry_run=False,
+            max_deletes_per_run=25,
+            require_tracker_contains="passthepopcorn",
+            removed_results=removed,
+            skipped_results=skipped,
+        )
+
+    assert [match.torrent.hash for match in removed] == ["abc"]
+    assert skipped == []

@@ -80,10 +80,12 @@ def remove_matches(
     dry_run: bool,
     max_deletes_per_run: int,
     require_tracker_contains: str,
+    removed_results: list[Match] | None = None,
+    skipped_results: list[tuple[Match, str]] | None = None,
 ) -> tuple[list[Match], list[tuple[Match, str]]]:
-    """Remove matched torrents, respecting dry-run, tracker checks, and the safety cap."""
-    removed: list[Match] = []
-    skipped: list[tuple[Match, str]] = []
+    """Remove matched torrents, updating result lists before any later client failure."""
+    removed = removed_results if removed_results is not None else []
+    skipped = skipped_results if skipped_results is not None else []
     cap = max_deletes_per_run
     if dry_run and len(matches) > cap:
         LOGGER.warning(
@@ -93,7 +95,7 @@ def remove_matches(
             cap,
         )
 
-    live_processed = 0
+    live_processed = len(removed)
     for match in matches:
         _log_candidate(match)
         if not tracker_verified(client, match.torrent.hash, require_tracker_contains):

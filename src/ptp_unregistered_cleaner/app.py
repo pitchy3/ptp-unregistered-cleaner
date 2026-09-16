@@ -8,9 +8,9 @@ import time
 from pathlib import Path
 
 from .config import Config, ConfigError, load_config, sanitized_config_summary
-from .matcher import find_matches, remove_matches
+from .matcher import Match, find_matches, remove_matches
 from .ptp_client import PtpClient
-from .qbittorrent_client import QBittorrentClient
+from .qbittorrent_client import QBittorrentClient, QBittorrentClientError
 from .state import save_state, successful_state
 
 LOGGER = logging.getLogger(__name__)
@@ -40,29 +40,40 @@ def run_once(config: Config | None = None) -> None:
     skipped_state: list[dict[str, str]] = []
 
     for instance in cfg.qbittorrent:
-        with QBittorrentClient(instance) as client:
-            torrents = client.list_torrents()
-            matches, filtered = find_matches(instance.name, torrents, ptp_torrents, cfg.matching)
-            for torrent, reason in filtered:
-                LOGGER.info("Skipping %s on %s: %s", torrent.hash, instance.name, reason)
-                skipped_state.append(
-                    {"instance": instance.name, "hash": torrent.hash, "reason": reason}
+        removed: list[Match] = []
+        skipped: list[tuple[Match, str]] = []
+        try:
+            with QBittorrentClient(instance) as client:
+                torrents = client.list_torrents()
+                matches, filtered = find_matches(
+                    instance.name, torrents, ptp_torrents, cfg.matching
                 )
-            removed, skipped = remove_matches(
-                client,
-                matches,
-                dry_run=cfg.app.dry_run,
-                max_deletes_per_run=cfg.app.max_deletes_per_run,
-                require_tracker_contains=cfg.matching.require_tracker_contains,
+                for torrent, reason in filtered:
+                    LOGGER.info("Skipping %s on %s: %s", torrent.hash, instance.name, reason)
+                    skipped_state.append(
+                        {"instance": instance.name, "hash": torrent.hash, "reason": reason}
+                    )
+                remove_matches(
+                    client,
+                    matches,
+                    dry_run=cfg.app.dry_run,
+                    max_deletes_per_run=cfg.app.max_deletes_per_run,
+                    require_tracker_contains=cfg.matching.require_tracker_contains,
+                    removed_results=removed,
+                    skipped_results=skipped,
+                )
+        except QBittorrentClientError:
+            LOGGER.exception(
+                "qBittorrent instance %s failed; skipping this instance", instance.name
             )
-            if removed:
-                removed_by_instance.setdefault(instance.name, []).extend(
-                    match.torrent.hash for match in removed
-                )
-            for match, reason in skipped:
-                skipped_state.append(
-                    {"instance": instance.name, "hash": match.torrent.hash, "reason": reason}
-                )
+        if removed:
+            removed_by_instance.setdefault(instance.name, []).extend(
+                match.torrent.hash for match in removed
+            )
+        for match, reason in skipped:
+            skipped_state.append(
+                {"instance": instance.name, "hash": match.torrent.hash, "reason": reason}
+            )
 
     save_state(
         cfg.app.state_path,
