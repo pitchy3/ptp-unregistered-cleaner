@@ -96,13 +96,17 @@ def run_daemon(config: Config | None = None) -> None:
 
     LOGGER.info("Starting daemon with interval_days=%s", cfg.app.interval_days)
     if cfg.app.run_on_startup:
-        run_once(cfg)
+        _run_daemon_cleanup(cfg)
     while True:
         LOGGER.info("Sleeping %.0f seconds until next cleanup run", interval_seconds)
         time.sleep(interval_seconds)
-        try:
-            run_once(cfg)
-        except ConfigError:
-            raise
-        except Exception:
-            LOGGER.exception("Cleanup run failed; daemon will retry after the configured interval")
+        _run_daemon_cleanup(cfg)
+
+
+def _run_daemon_cleanup(config: Config) -> None:
+    try:
+        run_once(config)
+    except ConfigError:
+        raise
+    except Exception:
+        LOGGER.exception("Cleanup run failed; daemon will retry after the configured interval")
