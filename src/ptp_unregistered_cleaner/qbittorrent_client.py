@@ -131,7 +131,15 @@ class QBittorrentClient:
             raise QBittorrentClientError(
                 f"qBittorrent auth failure for instance {self.config.name}"
             )
-        response.raise_for_status()
+        import httpx
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise QBittorrentClientError(
+                f"qBittorrent request failed for instance {self.config.name}: "
+                f"HTTP {response.status_code}"
+            ) from exc
         return response
 
 
