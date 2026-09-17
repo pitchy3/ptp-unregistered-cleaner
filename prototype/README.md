@@ -1,14 +1,12 @@
 # Radarr REPACK/Torznab prototype
 
-This is a disposable validation tool for the proposed PTP trump-replacement workflow. It does **not** change the cleaner's normal behavior.
+Disposable validation tool for the proposed PTP trump-replacement workflow. It does **not** change the cleaner's normal behavior. Python 3.9+; no third-party packages.
 
-It exposes one synthetic Torznab movie result. Generation 1 appends `.REPACK`, generation 2 `.REPACK2`, etc. The purpose is to prove that current Radarr treats successive same-quality releases as native revision upgrades and then performs its normal download/import/hardlink/replacement workflow.
+## Proven
 
-## 1. Run the server
+Interactive testing against Radarr has shown that synthetic `.REPACK` and `.REPACK2` titles preserve the original quality and are recognized as revisions. `Do Not Upgrade Automatically` rejects them as `Repack downloading is disabled`; `Prefer and Upgrade` accepts them.
 
-Requires Python 3.9+ and no third-party packages.
-
-From a clone of this branch:
+## Run a search-only test
 
 ```bash
 python3 prototype/radarr_repack_torznab.py \
@@ -17,90 +15,74 @@ python3 prototype/radarr_repack_torznab.py \
   --imdb-id tt1234567
 ```
 
-It listens on `0.0.0.0:9697`. Check it from another machine/container that can reach it:
+Server listens on `0.0.0.0:9697`. Health/caps:
 
 ```bash
 curl 'http://HOST_IP:9697/health'
 curl 'http://HOST_IP:9697/api?t=caps'
 ```
 
-Use an address reachable **from the Radarr container**. `localhost` inside Radarr normally points to Radarr itself, not the host running this prototype.
+Add a Generic Torznab indexer directly to Radarr using `http://HOST_IP:9697/api`. Use an address reachable from the Radarr container.
 
-## 2. Add it directly to Radarr
+## Full lifecycle test with an actual PTP torrent
 
-For the first test, bypass Prowlarr to reduce variables.
+The prototype can now proxy PTP's real torrent download endpoint. It follows Radarr's own PTP implementation: `torrents.php?action=download&id=<torrent id>` with `ApiUser` and `ApiKey` request headers. Credentials remain server-side and are never emitted in Torznab XML or URLs.
 
-In Radarr, add a **Generic Torznab** indexer and set its URL/base URL to:
+Export the same API credentials used by `ptp-unregistered-cleaner`:
 
-```text
-http://HOST_IP:9697/api
+```bash
+export PTP_API_USER='your-api-user'
+export PTP_API_KEY='your-api-key'
 ```
 
-If Radarr's Generic Torznab form expects a base host rather than the full API path in your build, use `http://HOST_IP:9697` and verify that its test request reaches `/api?t=caps` in the prototype log.
-
-No API key is required. Enable movie search. The prototype advertises Movies/HD (2040).
-
-Before testing, verify Radarr's **Propers and Repacks** behavior is not configured to `Do Not Prefer`; the intended test uses Radarr's native revision-upgrade path.
-
-## 3. Acceptance-only test (safe first test)
-
-Start the prototype **without** `--torrent-file` or `--download-url`. Perform an interactive search for the matching movie in Radarr.
-
-Expected result:
-
-- the synthetic release appears;
-- quality/source/resolution remain the same as the real title;
-- `.REPACK` makes it an accepted revision upgrade rather than a same-quality rejection.
-
-Do not click Grab in this mode. The download endpoint deliberately returns HTTP 501.
-
-If Radarr rejects the release, inspect the rejection reason before proceeding. This is the most important result of the prototype.
-
-## 4. Full lifecycle test
-
-Use a disposable/test movie and a **real torrent that actually contains the release represented by `--title`**. Do not use an unrelated torrent: Radarr's completed-download parsing/import must correspond to the downloaded content.
-
-Serve a local torrent file:
+Then run:
 
 ```bash
 python3 prototype/radarr_repack_torznab.py \
-  --title 'Movie.2024.1080p.WEB-DL.DDP5.1.H.264-GROUP' \
+  --title 'REAL.REPLACEMENT.RELEASE.NAME-GROUP' \
   --generation 1 \
   --imdb-id tt1234567 \
-  --guid ptp-test-1 \
-  --torrent-file /path/to/replacement.torrent
+  --ptp-torrent-id 1234567 \
+  --guid ptp-test-1234567
 ```
 
-Or redirect the download endpoint to an already-authenticated/test torrent URL:
+The `--title` must describe the **actual content in that PTP torrent**. The prototype only changes the Torznab-facing title by appending `.REPACK`; it does not rename the torrent payload or downloaded files.
+
+Before involving Radarr, test the proxy itself:
 
 ```bash
-python3 prototype/radarr_repack_torznab.py \
-  --title 'Movie.2024.1080p.WEB-DL.DDP5.1.H.264-GROUP' \
-  --generation 1 \
-  --imdb-id tt1234567 \
-  --guid ptp-test-1 \
-  --download-url 'https://example.invalid/path/to/test.torrent'
+curl -f -o /tmp/ptp-test.torrent 'http://127.0.0.1:9697/download/ptp-test-1234567'
+ls -lh /tmp/ptp-test.torrent
 ```
 
-Search interactively in Radarr and grab the synthetic result. Confirm Radarr sends it to the configured download client, Completed Download Handling imports it, and your normal hardlink workflow is used.
+The server log should say `Fetched PTP torrent id=...`. The downloaded file should be a real `.torrent`. Delete `/tmp/ptp-test.torrent` after checking it.
 
-## 5. Critical chained-replacement test
+For the controlled Radarr test, temporarily set **Propers and Repacks = Prefer and Upgrade**, perform Interactive Search, and manually grab only the synthetic result. Observe:
 
-After generation 1 has imported successfully, stop the server and restart it with:
+1. Radarr requests the prototype `/download/...` URL.
+2. Prototype authenticates to PTP and returns the real `.torrent`.
+3. Radarr sends it to qBittorrent.
+4. qBittorrent completes it.
+5. Radarr Completed Download Handling imports/hardlinks it and replaces the previous library file.
+6. Radarr's movie History identifies the grab/import as the synthetic REPACK revision.
+
+Return the global proper/repack setting to its prior value after the controlled test.
+
+## Chained replacement test
+
+After generation 1 imports successfully, restart with generation 2 and a new GUID:
 
 ```text
---generation 2 --guid ptp-test-2
+--generation 2 --guid ptp-test-generation-2
 ```
 
-and a second valid replacement torrent/title as appropriate. Search the same movie again.
+Interactive Search should accept `.REPACK2` over the imported `.REPACK`. Then testing generation 1 again should not represent an upgrade over generation 2.
 
-Expected result: `.REPACK2` is accepted as an upgrade over the imported `.REPACK` revision and Radarr performs the replacement again.
+## Other download modes
 
-Then optionally restart with generation 1 again. It should **not** be accepted as an upgrade over generation 2.
+A local `.torrent` can still be served with `--torrent-file /path/file.torrent`, or an existing URL can be used with `--download-url URL`. Only one download mode may be configured at a time.
 
-## Success criteria
-
-The production implementation should not begin until these are observed:
+## Success criteria before production implementation
 
 1. REPACK keeps the same underlying quality but is accepted as a higher revision.
 2. Radarr owns the grab and sends it to qBittorrent normally.
@@ -108,4 +90,4 @@ The production implementation should not begin until these are observed:
 4. REPACK2 upgrades the already-imported REPACK release.
 5. A lower revision cannot replace a higher one.
 
-Once these pass, the proven pieces can be moved into `ptp-unregistered-cleaner`: persistent trump-chain generation, a replacement-only Torznab endpoint, authenticated PTP torrent proxying, movie mapping, and a Radarr `MoviesSearch` trigger.
+Once these pass, move the proven pieces into `ptp-unregistered-cleaner`: replacement parsing, persistent trump-chain generation, replacement-only Torznab, authenticated PTP torrent proxying, movie mapping, and a targeted Radarr search trigger.
