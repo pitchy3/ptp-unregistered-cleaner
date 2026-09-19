@@ -27,6 +27,7 @@ from .torznab import ReplacementCatalog, ReplacementServer
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = "/config/config.yaml"
+CHECKPOINT_RETRY_SECONDS = 60
 
 
 def load_config_from_env() -> Config:
@@ -110,6 +111,7 @@ def run_once(
                         unpersisted_checkpoints,
                         cfg.app.state_path,
                         volatile_requests,
+                        volatile_replacement_requests is None,
                     )
                     remove_matches(
                         client,
@@ -194,6 +196,7 @@ def _request_replacements(
     unpersisted_checkpoints: set[str] | None = None,
     checkpoint_state_path: str | Path | None = None,
     volatile_replacement_requests: dict[str, str] | None = None,
+    retry_checkpoint_writes: bool = False,
 ) -> list[Match]:
     removable: list[Match] = []
     live_processed = 0
@@ -202,8 +205,14 @@ def _request_replacements(
             qbit_client, match.torrent.hash, require_tracker_contains
         )
         if not tracker_ok:
-            # remove_matches will record the normal tracker-verification skip.
-            removable.append(match)
+            reason = "tracker verification failed; preserved without replacement"
+            LOGGER.warning(
+                "Skipping replacement and removal for %s on %s: %s",
+                match.torrent.hash,
+                match.instance_name,
+                reason,
+            )
+            skipped.append((match, reason))
             continue
         if not dry_run and live_processed >= max_deletes_per_run:
             reason = f"max_deletes_per_run cap reached ({max_deletes_per_run})"
@@ -274,6 +283,17 @@ def _request_replacements(
                     checkpoint_state_path,
                     State(replacement_requests=replacement_requests),
                 )
+                while not checkpoint_saved and retry_checkpoint_writes:
+                    LOGGER.error(
+                        "Replacement checkpoint is not durable; retrying state write "
+                        "in %s seconds before cleanup can continue",
+                        CHECKPOINT_RETRY_SECONDS,
+                    )
+                    time.sleep(CHECKPOINT_RETRY_SECONDS)
+                    checkpoint_saved = save_state(
+                        checkpoint_state_path,
+                        State(replacement_requests=replacement_requests),
+                    )
                 if checkpoint_saved:
                     # The complete map was persisted, including any checkpoint that
                     # failed earlier in this run.

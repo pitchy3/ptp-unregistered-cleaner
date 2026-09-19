@@ -411,7 +411,12 @@ def test_failed_checkpoint_write_preserves_replaced_torrent(
     monkeypatch.setattr(app, "save_state", lambda *_args, **_kwargs: False)
 
     with pytest.raises(StateError, match="could not be persisted"):
-        app.run_once(config, ptp_client=Ptp(), coordinators={"movies": Coordinator()})
+        app.run_once(
+            config,
+            ptp_client=Ptp(),
+            coordinators={"movies": Coordinator()},
+            volatile_replacement_requests={},
+        )
 
     assert deleted == []
 
@@ -553,3 +558,80 @@ def test_each_replacement_is_checkpointed_before_processing_the_next(
         {"movies|first-hash": "30"},
         {"movies|first-hash": "30", "movies|second-hash": "31"},
     ]
+
+
+def test_failed_tracker_verification_never_reaches_removal() -> None:
+    class ChangingTrackerClient:
+        calls = 0
+
+        def get_trackers(self, _torrent_hash):
+            self.calls += 1
+            if self.calls == 1:
+                return []
+            return [Tracker("https://passthepopcorn.me/announce")]
+
+    match = app.Match(
+        "main",
+        Torrent("old-hash", "Old.Release"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="30"
+        ),
+    )
+    tracker_client = ChangingTrackerClient()
+    skipped = []
+
+    removable = app._request_replacements(
+        [match],
+        [_radarr_route()],
+        {},
+        tracker_client,
+        "passthepopcorn",
+        False,
+        25,
+        {},
+        skipped,
+    )
+
+    assert removable == []
+    assert tracker_client.calls == 1
+    assert "preserved without replacement" in skipped[0][1]
+
+
+def test_one_shot_retries_checkpoint_until_it_is_durable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    match = app.Match(
+        "main",
+        Torrent("old-hash", "Old.Release"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="30"
+        ),
+    )
+    save_results = iter([False, False, True])
+    sleeps: list[int] = []
+
+    class Coordinator:
+        def replace(self, _match):
+            return "30"
+
+    monkeypatch.setattr(app, "save_state", lambda *_args, **_kwargs: next(save_results))
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    removable = app._request_replacements(
+        [match],
+        [_radarr_route()],
+        {"movies": Coordinator()},
+        _TrackerClient(),
+        "passthepopcorn",
+        False,
+        25,
+        {},
+        [],
+        set(),
+        tmp_path / "state.json",
+        {},
+        True,
+    )
+
+    assert removable == [match]
+    assert sleeps == [60, 60]
