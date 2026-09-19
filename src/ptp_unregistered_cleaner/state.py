@@ -1,4 +1,4 @@
-"""Best-effort JSON state persistence."""
+"""Crash-safe JSON state persistence."""
 
 from __future__ import annotations
 
@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
+
+
+class StateError(RuntimeError):
+    """Raised when existing safety state cannot be loaded reliably."""
 
 
 @dataclass
@@ -60,10 +64,9 @@ def load_state(path: str | Path) -> State:
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        LOGGER.warning("Unable to read state file %s: %s", state_path, exc)
-        return State()
+        raise StateError(f"Unable to read state file {state_path}: {exc}") from exc
     if not isinstance(data, dict):
-        return State()
+        raise StateError(f"State file {state_path} must contain a JSON object")
     return State.from_dict(data)
 
 

@@ -52,11 +52,13 @@ def run_once(
         cfg.app.max_deletes_per_run,
         [instance.name for instance in cfg.qbittorrent],
     )
+    # Existing replacement checkpoints are a deletion/download safety boundary.
+    # Load them before making any external request and abort if they are unreadable.
+    previous_state = load_state(cfg.app.state_path)
     ptp_client = ptp_client or PtpClient(cfg.ptp, cfg.credentials)
     ptp_torrents = ptp_client.fetch_unregistered()
     removed_by_instance: dict[str, list[str]] = {}
     skipped_state: list[dict[str, str]] = []
-    previous_state = load_state(cfg.app.state_path)
     replacement_requests = dict(previous_state.replacement_requests)
     unpersisted_checkpoints: set[str] = set()
     remaining_torrent_copies: Counter[str] = Counter()

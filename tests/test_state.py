@@ -1,7 +1,15 @@
 from pathlib import Path
 
+import pytest
+
 from ptp_unregistered_cleaner import state as state_module
-from ptp_unregistered_cleaner.state import State, load_state, save_state, successful_state
+from ptp_unregistered_cleaner.state import (
+    State,
+    StateError,
+    load_state,
+    save_state,
+    successful_state,
+)
 
 
 def test_state_json_write_read(tmp_path: Path) -> None:
@@ -50,3 +58,10 @@ def test_failed_atomic_replace_preserves_previous_state(
     assert save_state(path, replacement) is False
     assert load_state(path) == original
     assert list(tmp_path.glob(".state.json.*.tmp")) == []
+
+
+def test_invalid_existing_state_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(StateError, match="Unable to read state file"):
+        load_state(path)

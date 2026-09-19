@@ -14,7 +14,7 @@
 - Removes matching qBittorrent torrent entries with `deleteFiles=false`.
 - Can optionally ask Radarr to download PTP's designated replacement first, then let
   Radarr perform its normal import, hardlink, and library-file replacement workflow.
-- Maintains a best-effort JSON state file with the most recent run summary.
+- Maintains a crash-safe JSON state file with the most recent run summary and replacement checkpoints.
 
 ## What this does NOT do
 
@@ -86,7 +86,7 @@ Configuration is loaded from `PTP_CONFIG_PATH`, defaulting to `/config/config.ya
 | `run_on_startup` | `true` | Run immediately when daemon mode starts. |
 | `dry_run` | `true` | If true, log what would be removed but do not call qBittorrent delete. |
 | `max_deletes_per_run` | `25` | Safety cap for live removals per qBittorrent instance run path. |
-| `state_path` | `/data/state.json` | Best-effort JSON state file path. |
+| `state_path` | `/data/state.json` | Crash-safe JSON state path; an unreadable existing file stops cleanup. |
 
 ### `ptp`
 

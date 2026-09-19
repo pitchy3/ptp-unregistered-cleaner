@@ -2,6 +2,8 @@ import logging
 from collections import Counter
 from pathlib import Path
 
+import pytest
+
 from ptp_unregistered_cleaner import app
 from ptp_unregistered_cleaner.config import (
     AppConfig,
@@ -18,7 +20,7 @@ from ptp_unregistered_cleaner.qbittorrent_client import (
     Torrent,
     Tracker,
 )
-from ptp_unregistered_cleaner.state import load_state
+from ptp_unregistered_cleaner.state import StateError, load_state
 
 
 class _TrackerClient:
@@ -87,6 +89,19 @@ def test_run_once_skips_failed_qbittorrent_instance(
     assert processed_instances == ["offline", "healthy"]
     assert (tmp_path / "state.json").exists()
     assert "qBittorrent instance offline failed; skipping this instance" in caplog.text
+
+
+def test_run_once_aborts_before_external_requests_when_state_is_invalid(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "state.json").write_text("{not-json", encoding="utf-8")
+
+    class UnexpectedPtpClient:
+        def fetch_unregistered(self):
+            raise AssertionError("PTP must not be queried without reliable state")
+
+    with pytest.raises(StateError, match="Unable to read state file"):
+        app.run_once(_config(tmp_path), ptp_client=UnexpectedPtpClient())
 
 
 def test_run_once_records_deletions_completed_before_instance_failure(
