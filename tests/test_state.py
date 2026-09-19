@@ -65,3 +65,16 @@ def test_invalid_existing_state_fails_closed(tmp_path: Path) -> None:
     path.write_text("{not-json", encoding="utf-8")
     with pytest.raises(StateError, match="Unable to read state file"):
         load_state(path)
+
+
+@pytest.mark.parametrize("malformed", [None, [], ["movies|old", "30"]])
+def test_malformed_replacement_checkpoint_map_fails_closed(
+    tmp_path: Path, malformed
+) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(
+        state_module.json.dumps({"replacement_requests": malformed}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StateError, match="replacement_requests must be a JSON object"):
+        load_state(path)

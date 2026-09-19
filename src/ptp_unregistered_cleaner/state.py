@@ -28,6 +28,14 @@ class State:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> State:
+        raw_replacement_requests = data.get("replacement_requests", {})
+        if not isinstance(raw_replacement_requests, dict):
+            raise StateError("State replacement_requests must be a JSON object")
+        if not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in raw_replacement_requests.items()
+        ):
+            raise StateError("State replacement_requests keys and values must be strings")
         return cls(
             last_successful_run_at=data.get("last_successful_run_at"),
             last_seen_infohashes_count=int(data.get("last_seen_infohashes_count", 0)),
@@ -42,8 +50,7 @@ class State:
                 if isinstance(item, dict)
             ],
             replacement_requests={
-                str(key): str(value)
-                for key, value in (data.get("replacement_requests", {}) or {}).items()
+                key: value for key, value in raw_replacement_requests.items()
             },
         )
 

@@ -22,7 +22,7 @@ from .ptp_client import PtpClient
 from .qbittorrent_client import QBittorrentClient, QBittorrentClientError
 from .radarr_client import RadarrClient
 from .replacement import ReplacementCoordinator
-from .state import State, load_state, save_state, successful_state
+from .state import State, StateError, load_state, save_state, successful_state
 from .torznab import ReplacementCatalog, ReplacementServer
 
 LOGGER = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ def run_once(
     *,
     ptp_client: PtpClient | None = None,
     coordinators: dict[str, ReplacementCoordinator] | None = None,
+    volatile_replacement_requests: dict[str, str] | None = None,
 ) -> None:
     cfg = config or load_config_from_env()
     LOGGER.info(
@@ -59,8 +60,14 @@ def run_once(
     ptp_torrents = ptp_client.fetch_unregistered()
     removed_by_instance: dict[str, list[str]] = {}
     skipped_state: list[dict[str, str]] = []
+    volatile_requests = (
+        volatile_replacement_requests
+        if volatile_replacement_requests is not None
+        else {}
+    )
     replacement_requests = dict(previous_state.replacement_requests)
-    unpersisted_checkpoints: set[str] = set()
+    replacement_requests.update(volatile_requests)
+    unpersisted_checkpoints = set(volatile_requests)
     remaining_torrent_copies: Counter[str] = Counter()
     all_instances_processed = True
 
@@ -102,6 +109,7 @@ def run_once(
                         skipped,
                         unpersisted_checkpoints,
                         cfg.app.state_path,
+                        volatile_requests,
                     )
                     remove_matches(
                         client,
@@ -137,8 +145,11 @@ def run_once(
         _prune_replacement_requests(
             replacement_requests, remaining_torrent_copies, all_instances_processed
         )
+        for checkpoint in list(volatile_requests):
+            if checkpoint not in replacement_requests:
+                volatile_requests.pop(checkpoint, None)
 
-    save_state(
+    final_state_saved = save_state(
         cfg.app.state_path,
         successful_state(
             infohash_count=len(ptp_torrents),
@@ -147,6 +158,13 @@ def run_once(
             replacement_requests=replacement_requests,
         ),
     )
+    if final_state_saved:
+        volatile_requests.clear()
+    elif volatile_requests:
+        raise StateError(
+            "Replacement checkpoints could not be persisted; preserving them in "
+            "memory and aborting this cleanup run"
+        )
     LOGGER.info("Cleanup run completed successfully")
 
 
@@ -175,6 +193,7 @@ def _request_replacements(
     skipped: list[tuple[Match, str]],
     unpersisted_checkpoints: set[str] | None = None,
     checkpoint_state_path: str | Path | None = None,
+    volatile_replacement_requests: dict[str, str] | None = None,
 ) -> list[Match]:
     removable: list[Match] = []
     live_processed = 0
@@ -260,9 +279,13 @@ def _request_replacements(
                     # failed earlier in this run.
                     if unpersisted_checkpoints is not None:
                         unpersisted_checkpoints.clear()
+                    if volatile_replacement_requests is not None:
+                        volatile_replacement_requests.clear()
                 else:
                     if unpersisted_checkpoints is not None:
                         unpersisted_checkpoints.add(checkpoint)
+                    if volatile_replacement_requests is not None:
+                        volatile_replacement_requests[checkpoint] = replacement_id
                     reason = (
                         "replacement requested but checkpoint could not be saved; "
                         "preserved to prevent unsafe cleanup"
@@ -291,6 +314,7 @@ def run_daemon(config: Config | None = None) -> None:
         return
 
     LOGGER.info("Starting daemon with interval_days=%s", cfg.app.interval_days)
+    volatile_replacement_requests: dict[str, str] = {}
     with ExitStack() as stack:
         ptp_client = None
         coordinators = None
@@ -298,23 +322,36 @@ def run_daemon(config: Config | None = None) -> None:
             ptp_client = PtpClient(cfg.ptp, cfg.credentials)
             coordinators = _start_replacement_services(stack, cfg, ptp_client)
         if cfg.app.run_on_startup:
-            _run_daemon_cleanup(cfg, ptp_client, coordinators)
+            _run_daemon_cleanup(
+                cfg, ptp_client, coordinators, volatile_replacement_requests
+            )
         while True:
             LOGGER.info("Sleeping %.0f seconds until next cleanup run", interval_seconds)
             time.sleep(interval_seconds)
-            _run_daemon_cleanup(cfg, ptp_client, coordinators)
+            _run_daemon_cleanup(
+                cfg, ptp_client, coordinators, volatile_replacement_requests
+            )
 
 
 def _run_daemon_cleanup(
     config: Config,
     ptp_client: PtpClient | None = None,
     coordinators: dict[str, ReplacementCoordinator] | None = None,
+    volatile_replacement_requests: dict[str, str] | None = None,
 ) -> None:
     try:
         if ptp_client is None and coordinators is None:
-            run_once(config)
+            run_once(
+                config,
+                volatile_replacement_requests=volatile_replacement_requests,
+            )
         else:
-            run_once(config, ptp_client=ptp_client, coordinators=coordinators)
+            run_once(
+                config,
+                ptp_client=ptp_client,
+                coordinators=coordinators,
+                volatile_replacement_requests=volatile_replacement_requests,
+            )
     except ConfigError:
         raise
     except Exception:

@@ -410,7 +410,8 @@ def test_failed_checkpoint_write_preserves_replaced_torrent(
     monkeypatch.setattr(app, "QBittorrentClient", Qbit)
     monkeypatch.setattr(app, "save_state", lambda *_args, **_kwargs: False)
 
-    app.run_once(config, ptp_client=Ptp(), coordinators={"movies": Coordinator()})
+    with pytest.raises(StateError, match="could not be persisted"):
+        app.run_once(config, ptp_client=Ptp(), coordinators={"movies": Coordinator()})
 
     assert deleted == []
 
@@ -476,7 +477,26 @@ def test_failed_checkpoint_write_preserves_later_instance_copy(
     monkeypatch.setattr(app, "QBittorrentClient", Qbit)
     monkeypatch.setattr(app, "save_state", lambda *_args, **_kwargs: False)
 
-    app.run_once(config, ptp_client=Ptp(), coordinators={"movies": Coordinator()})
+    volatile_requests: dict[str, str] = {}
+    with pytest.raises(StateError, match="could not be persisted"):
+        app.run_once(
+            config,
+            ptp_client=Ptp(),
+            coordinators={"movies": Coordinator()},
+            volatile_replacement_requests=volatile_requests,
+        )
+
+    assert replacement_calls == ["first"]
+    assert deleted == []
+    assert volatile_requests == {"movies|old-hash": "30"}
+
+    with pytest.raises(StateError, match="could not be persisted"):
+        app.run_once(
+            config,
+            ptp_client=Ptp(),
+            coordinators={"movies": Coordinator()},
+            volatile_replacement_requests=volatile_requests,
+        )
 
     assert replacement_calls == ["first"]
     assert deleted == []
