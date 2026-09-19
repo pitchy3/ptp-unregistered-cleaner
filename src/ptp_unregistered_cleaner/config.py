@@ -56,6 +56,21 @@ class QBittorrentConfig:
 
 
 @dataclass(frozen=True)
+class RadarrConfig:
+    name: str
+    url: str
+    api_key: str
+    qbittorrent_instances: list[str]
+    qbittorrent_categories: list[str] = field(default_factory=list)
+    timeout_seconds: float = 30
+    torznab_host: str = "0.0.0.0"
+    torznab_port: int = 9697
+    torznab_external_url: str = ""
+    torznab_api_key: str = ""
+    preserve_on_failure: bool = True
+
+
+@dataclass(frozen=True)
 class Credentials:
     ptp_api_user: str
     ptp_api_key: str
@@ -68,6 +83,7 @@ class Config:
     matching: MatchingConfig
     qbittorrent: list[QBittorrentConfig]
     credentials: Credentials
+    radarr: list[RadarrConfig] = field(default_factory=list)
 
 
 def interpolate_env(value: Any, environ: dict[str, str] | None = None) -> Any:
@@ -119,6 +135,7 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> Conf
     ptp_raw = data.get("ptp", {}) or {}
     matching_raw = data.get("matching", {}) or {}
     qbit_raw = data.get("qbittorrent", []) or []
+    radarr_raw = data.get("radarr", []) or []
 
     if not isinstance(qbit_raw, list) or not qbit_raw:
         raise ConfigError("At least one qbittorrent instance must be configured")
@@ -174,13 +191,22 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> Conf
                 password=str(item["password"]),
             )
         )
+    normalized_instance_names = [item.name.casefold() for item in instances]
+    if len(normalized_instance_names) != len(set(normalized_instance_names)):
+        raise ConfigError("qbittorrent instance names must be unique")
 
     credentials = Credentials(
         ptp_api_user=require_env("PTP_API_USER", env),
         ptp_api_key=require_env("PTP_API_KEY", env),
     )
+    radarr = _load_radarr_configs(radarr_raw, instances)
     return Config(
-        app=app, ptp=ptp, matching=matching, qbittorrent=instances, credentials=credentials
+        app=app,
+        ptp=ptp,
+        matching=matching,
+        qbittorrent=instances,
+        credentials=credentials,
+        radarr=radarr,
     )
 
 
@@ -195,7 +221,149 @@ def sanitized_config_summary(config: Config) -> dict[str, Any]:
             for item in config.qbittorrent
         ],
         "credentials": {"ptp_api_user": "***", "ptp_api_key": "***"},
+        "radarr": [
+            {
+                **radarr_without_secrets(item),
+                "api_key": "***",
+                "torznab_api_key": "***",
+            }
+            for item in config.radarr
+        ],
     }
+
+
+def radarr_without_secrets(config: RadarrConfig) -> dict[str, Any]:
+    return {
+        "name": config.name,
+        "url": config.url,
+        "qbittorrent_instances": config.qbittorrent_instances,
+        "qbittorrent_categories": config.qbittorrent_categories,
+        "timeout_seconds": config.timeout_seconds,
+        "torznab_host": config.torznab_host,
+        "torznab_port": config.torznab_port,
+        "torznab_external_url": config.torznab_external_url,
+        "preserve_on_failure": config.preserve_on_failure,
+    }
+
+
+def _load_radarr_configs(
+    raw: Any, qbittorrent: list[QBittorrentConfig]
+) -> list[RadarrConfig]:
+    if not isinstance(raw, list):
+        raise ConfigError("radarr must be a list")
+    known_instances = {item.name.casefold() for item in qbittorrent}
+    configs: list[RadarrConfig] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ConfigError(f"radarr entry {index} must be a mapping")
+        instance_names = _as_str_list(
+            item.get("qbittorrent_instances"),
+            f"radarr entry {index} qbittorrent_instances",
+        )
+        categories = _as_str_list(
+            item.get("qbittorrent_categories", []),
+            f"radarr entry {index} qbittorrent_categories",
+        )
+        required = {
+            "name": item.get("name"),
+            "url": item.get("url"),
+            "api_key": item.get("api_key"),
+            "torznab_external_url": item.get("torznab_external_url"),
+            "torznab_api_key": item.get("torznab_api_key"),
+        }
+        missing = [name for name, value in required.items() if not value]
+        if not instance_names:
+            missing.append("qbittorrent_instances")
+        if missing:
+            raise ConfigError(f"radarr entry {index} is missing: {', '.join(missing)}")
+        unknown = [name for name in instance_names if name.casefold() not in known_instances]
+        if unknown:
+            raise ConfigError(
+                f"radarr entry {index} references unknown qbittorrent instance(s): "
+                + ", ".join(unknown)
+            )
+        config = RadarrConfig(
+            name=str(required["name"]),
+            url=str(required["url"]).rstrip("/"),
+            api_key=str(required["api_key"]),
+            qbittorrent_instances=instance_names,
+            qbittorrent_categories=categories,
+            timeout_seconds=float(item.get("timeout_seconds", 30)),
+            torznab_host=str(item.get("torznab_host", "0.0.0.0")),
+            torznab_port=int(item.get("torznab_port", 9697 + index)),
+            torznab_external_url=str(required["torznab_external_url"]).rstrip("/"),
+            torznab_api_key=str(required["torznab_api_key"]),
+            preserve_on_failure=bool(item.get("preserve_on_failure", True)),
+        )
+        if not 1 <= config.torznab_port <= 65535:
+            raise ConfigError(f"radarr entry {index} torznab_port must be between 1 and 65535")
+        configs.append(config)
+    _validate_radarr_routes(configs)
+    return configs
+
+
+def _validate_radarr_routes(configs: list[RadarrConfig]) -> None:
+    names: set[str] = set()
+    ports: set[int] = set()
+    external_urls: set[str] = set()
+    for config in configs:
+        normalized_name = config.name.casefold()
+        if normalized_name in names:
+            raise ConfigError(f"Duplicate radarr name: {config.name}")
+        names.add(normalized_name)
+        if config.torznab_port in ports:
+            raise ConfigError(
+                f"Multiple radarr entries use Torznab port {config.torznab_port}"
+            )
+        ports.add(config.torznab_port)
+        normalized_url = config.torznab_external_url.casefold()
+        if normalized_url in external_urls:
+            raise ConfigError(
+                f"Multiple radarr entries use Torznab URL {config.torznab_external_url}"
+            )
+        external_urls.add(normalized_url)
+
+    for index, left in enumerate(configs):
+        for right in configs[index + 1 :]:
+            shared = {
+                name.casefold() for name in left.qbittorrent_instances
+            } & {name.casefold() for name in right.qbittorrent_instances}
+            if not shared:
+                continue
+            left_categories = {item.casefold() for item in left.qbittorrent_categories}
+            right_categories = {item.casefold() for item in right.qbittorrent_categories}
+            overlaps = (
+                not left_categories
+                or not right_categories
+                or bool(left_categories & right_categories)
+            )
+            if overlaps:
+                raise ConfigError(
+                    f"Ambiguous radarr routes {left.name!r} and {right.name!r} "
+                    f"for qbittorrent instance(s): {', '.join(sorted(shared))}"
+                )
+
+
+def radarr_route(
+    configs: list[RadarrConfig], instance_name: str, category: str | None
+) -> RadarrConfig | None:
+    instance = instance_name.casefold()
+    normalized_category = (category or "").casefold()
+    matches = [
+        config
+        for config in configs
+        if instance in {name.casefold() for name in config.qbittorrent_instances}
+        and (
+            not config.qbittorrent_categories
+            or normalized_category
+            in {item.casefold() for item in config.qbittorrent_categories}
+        )
+    ]
+    if len(matches) > 1:  # defensive; load_config rejects this topology
+        raise ConfigError(
+            f"Multiple Radarr routes match {instance_name!r} category {category!r}"
+        )
+    return matches[0] if matches else None
 
 
 
