@@ -95,6 +95,7 @@ def run_once(
                         client,
                         cfg.matching.require_tracker_contains,
                         cfg.app.dry_run,
+                        cfg.app.max_deletes_per_run,
                         replacement_requests,
                         skipped,
                     )
@@ -172,14 +173,35 @@ def _request_replacements(
     qbit_client: object,
     require_tracker_contains: str,
     dry_run: bool,
+    max_deletes_per_run: int,
     replacement_requests: dict[str, str],
     skipped: list[tuple[Match, str]],
 ) -> list[Match]:
     removable: list[Match] = []
+    live_processed = 0
     for match in matches:
+        tracker_ok = tracker_verified(
+            qbit_client, match.torrent.hash, require_tracker_contains
+        )
+        if not tracker_ok:
+            # remove_matches will record the normal tracker-verification skip.
+            removable.append(match)
+            continue
+        if not dry_run and live_processed >= max_deletes_per_run:
+            reason = f"max_deletes_per_run cap reached ({max_deletes_per_run})"
+            LOGGER.warning(
+                "Skipping replacement and removal for %s on %s: %s",
+                match.torrent.hash,
+                match.instance_name,
+                reason,
+            )
+            skipped.append((match, reason))
+            continue
         replacement_id = match.ptp.replacement_torrent_id
         if replacement_id is None:
             removable.append(match)
+            if not dry_run:
+                live_processed += 1
             continue
         route = radarr_route(
             radarr_configs, match.instance_name, match.torrent.category
@@ -192,14 +214,12 @@ def _request_replacements(
                 match.torrent.category,
             )
             removable.append(match)
+            if not dry_run:
+                live_processed += 1
             continue
         coordinator = coordinators.get(route.name.casefold())
         if coordinator is None:
             skipped.append((match, f"Radarr route {route.name!r} is unavailable"))
-            continue
-        if not tracker_verified(qbit_client, match.torrent.hash, require_tracker_contains):
-            # remove_matches will record the normal tracker-verification skip.
-            removable.append(match)
             continue
         if dry_run:
             LOGGER.info(
@@ -218,6 +238,7 @@ def _request_replacements(
                 checkpoint,
             )
             removable.append(match)
+            live_processed += 1
             continue
         try:
             coordinator.replace(match)
@@ -230,6 +251,7 @@ def _request_replacements(
                 skipped.append((match, f"replacement failed; preserved for retry: {exc}"))
                 continue
         removable.append(match)
+        live_processed += 1
     return removable
 
 

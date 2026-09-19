@@ -160,6 +160,7 @@ def test_failed_replacement_is_preserved_for_retry() -> None:
         _TrackerClient(),
         "passthepopcorn",
         False,
+        25,
         requests,
         skipped,
     )
@@ -188,6 +189,7 @@ def test_checkpointed_replacement_is_not_requested_twice() -> None:
         _TrackerClient(),
         "passthepopcorn",
         False,
+        25,
         {"movies|old-hash": "30"},
         [],
     )
@@ -249,6 +251,7 @@ def test_replacements_are_isolated_by_category_and_radarr_target() -> None:
         _TrackerClient(),
         "passthepopcorn",
         False,
+        25,
         requests,
         [],
     )
@@ -282,10 +285,40 @@ def test_unmapped_category_does_not_use_a_radarr_coordinator() -> None:
         _TrackerClient(),
         "passthepopcorn",
         False,
+        25,
         {},
         [],
     )
     assert removable == [match]
+
+
+def test_zero_cleanup_cap_does_not_request_replacement() -> None:
+    match = app.Match(
+        "main",
+        Torrent("old-hash", "Old.Release"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="30"
+        ),
+    )
+
+    class UnexpectedCoordinator:
+        def replace(self, _match: app.Match) -> None:
+            raise AssertionError("replacement must honor the cleanup cap")
+
+    skipped = []
+    removable = app._request_replacements(
+        [match],
+        [_radarr_route()],
+        {"movies": UnexpectedCoordinator()},
+        _TrackerClient(),
+        "passthepopcorn",
+        False,
+        0,
+        {},
+        skipped,
+    )
+    assert removable == []
+    assert skipped[0][1] == "max_deletes_per_run cap reached (0)"
 
 
 def test_replacement_checkpoint_waits_for_all_instance_copies() -> None:
