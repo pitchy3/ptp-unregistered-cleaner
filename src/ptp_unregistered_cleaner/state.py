@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -68,13 +70,29 @@ def load_state(path: str | Path) -> State:
 def save_state(path: str | Path, state: State) -> bool:
     """Persist state and report whether the write completed successfully."""
     state_path = Path(path)
+    temporary_path: Path | None = None
     try:
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(
-            json.dumps(state.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
-        )
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=state_path.parent,
+            prefix=f".{state_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            json.dump(state.to_dict(), temporary_file, indent=2, sort_keys=True)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, state_path)
     except OSError as exc:
         LOGGER.error("Unable to write state file %s: %s", state_path, exc)
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                LOGGER.warning("Unable to remove temporary state file %s", temporary_path)
         return False
     return True
 

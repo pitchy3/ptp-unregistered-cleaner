@@ -58,6 +58,7 @@ def run_once(
     skipped_state: list[dict[str, str]] = []
     previous_state = load_state(cfg.app.state_path)
     replacement_requests = dict(previous_state.replacement_requests)
+    unpersisted_checkpoints: set[str] = set()
     remaining_torrent_copies: Counter[str] = Counter()
     all_instances_processed = True
 
@@ -98,6 +99,7 @@ def run_once(
                         cfg.app.max_deletes_per_run,
                         replacement_requests,
                         skipped,
+                        unpersisted_checkpoints,
                     )
                     # Checkpoint successful grabs before qBittorrent removal. If removal
                     # fails, the next run can retry cleanup without downloading twice.
@@ -106,12 +108,21 @@ def run_once(
                             cfg.app.state_path,
                             State(replacement_requests=replacement_requests),
                         )
-                        if not checkpoint_saved:
+                        if checkpoint_saved:
+                            # save_state writes the complete replacement map, so any
+                            # checkpoint that failed earlier is now durable too.
+                            unpersisted_checkpoints.clear()
+                        else:
+                            newly_unpersisted = {
+                                key
+                                for key, replacement_id in replacement_requests.items()
+                                if requests_before.get(key) != replacement_id
+                            }
+                            unpersisted_checkpoints.update(newly_unpersisted)
                             matches = _preserve_uncheckpointed_replacements(
                                 matches,
                                 cfg.radarr,
-                                requests_before,
-                                replacement_requests,
+                                unpersisted_checkpoints,
                                 skipped,
                             )
                     remove_matches(
@@ -177,23 +188,17 @@ def _prune_replacement_requests(
 def _preserve_uncheckpointed_replacements(
     matches: list[Match],
     radarr_configs: list[RadarrConfig],
-    requests_before: dict[str, str],
-    replacement_requests: dict[str, str],
+    unpersisted_checkpoints: set[str],
     skipped: list[tuple[Match, str]],
 ) -> list[Match]:
     """Prevent cleanup when a newly requested replacement was not checkpointed."""
-    new_checkpoints = {
-        key
-        for key, replacement_id in replacement_requests.items()
-        if requests_before.get(key) != replacement_id
-    }
     removable: list[Match] = []
     for match in matches:
         route = radarr_route(
             radarr_configs, match.instance_name, match.torrent.category
         )
         checkpoint = _checkpoint_key(route, match.torrent.hash) if route else None
-        if checkpoint in new_checkpoints:
+        if checkpoint in unpersisted_checkpoints:
             reason = (
                 "replacement requested but checkpoint could not be saved; "
                 "preserved to prevent unsafe cleanup"
@@ -215,6 +220,7 @@ def _request_replacements(
     max_deletes_per_run: int,
     replacement_requests: dict[str, str],
     skipped: list[tuple[Match, str]],
+    unpersisted_checkpoints: set[str] | None = None,
 ) -> list[Match]:
     removable: list[Match] = []
     live_processed = 0
@@ -270,6 +276,14 @@ def _request_replacements(
             removable.append(match)
             continue
         checkpoint = _checkpoint_key(route, match.torrent.hash)
+        if checkpoint in (unpersisted_checkpoints or set()):
+            reason = (
+                "replacement checkpoint is not durable; preserved to prevent "
+                "duplicate download"
+            )
+            LOGGER.error("Preserving %s: %s", checkpoint, reason)
+            skipped.append((match, reason))
+            continue
         if replacement_requests.get(checkpoint) == replacement_id:
             LOGGER.info(
                 "Replacement %s was already requested for %s; continuing cleanup",

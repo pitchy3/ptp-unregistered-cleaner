@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from ptp_unregistered_cleaner import state as state_module
 from ptp_unregistered_cleaner.state import State, load_state, save_state, successful_state
 
 
@@ -32,3 +33,20 @@ def test_state_write_reports_failure(tmp_path: Path) -> None:
     parent_file = tmp_path / "not-a-directory"
     parent_file.write_text("occupied", encoding="utf-8")
     assert save_state(parent_file / "state.json", State()) is False
+
+
+def test_failed_atomic_replace_preserves_previous_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "state.json"
+    original = State(replacement_requests={"movies|old": "30"})
+    assert save_state(path, original) is True
+
+    def fail_replace(_source, _destination):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(state_module.os, "replace", fail_replace)
+    replacement = State(replacement_requests={"movies|new": "31"})
+    assert save_state(path, replacement) is False
+    assert load_state(path) == original
+    assert list(tmp_path.glob(".state.json.*.tmp")) == []
