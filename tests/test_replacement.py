@@ -116,6 +116,38 @@ def test_torznab_server_requires_proxy_key_for_search_and_download() -> None:
         assert response.content == b"d4:infode"
 
 
+def test_torznab_only_exposes_release_to_matching_movie_search() -> None:
+    class Ptp:
+        def download_torrent(self, _torrent_id: str) -> bytes:
+            return b"d4:infode"
+
+    catalog = ReplacementCatalog()
+    catalog.publish(
+        ReplacementTorrent(
+            "34", "56", "Movie-GROUP", 1234, "tt123", "99", seeders=1, peers=1
+        )
+    )
+    server = ReplacementServer(
+        "127.0.0.1", 0, "http://cleaner:9697", "proxy-secret", catalog, Ptp()
+    )
+    port = server._server.server_address[1]
+    base = f"http://127.0.0.1:{port}/api?apikey=proxy-secret"
+    with server, httpx.Client(trust_env=False) as client:
+        assert "Movie-GROUP" not in client.get(f"{base}&t=search").text
+        assert "Movie-GROUP" not in client.get(f"{base}&t=movie&q=Movie").text
+        assert "Movie-GROUP" not in client.get(f"{base}&t=movie&imdbid=456").text
+        assert (
+            "Movie-GROUP"
+            not in client.get(f"{base}&t=movie&imdbid=123&tmdbid=100").text
+        )
+        assert "Movie-GROUP" in client.get(f"{base}&t=movie&imdbid=123").text
+        assert "Movie-GROUP" in client.get(f"{base}&t=movie&tmdbid=99").text
+        assert (
+            "Movie-GROUP"
+            in client.get(f"{base}&t=movie&imdbid=123&tmdbid=99").text
+        )
+
+
 def test_radarr_grab_only_bypasses_known_upgrade_policy(monkeypatch) -> None:
     client = object.__new__(RadarrClient)
     calls = []

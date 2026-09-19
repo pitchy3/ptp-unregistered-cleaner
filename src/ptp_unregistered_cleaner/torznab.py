@@ -99,6 +99,29 @@ def build_feed(
     ).encode()
 
 
+def matching_movie_entries(
+    entries: list[PublishedReplacement], imdb_id: str, tmdb_id: str
+) -> list[PublishedReplacement]:
+    """Expose candidates only to an identifier-scoped Radarr movie search."""
+    normalized_imdb = imdb_id.casefold().removeprefix("tt")
+    normalized_tmdb = tmdb_id.strip()
+    if not normalized_imdb and not normalized_tmdb:
+        return []
+    return [
+        entry
+        for entry in entries
+        if (
+            not normalized_imdb
+            or (entry.replacement.imdb_id or "").casefold().removeprefix("tt")
+            == normalized_imdb
+        )
+        and (
+            not normalized_tmdb
+            or (entry.replacement.tmdb_id or "").strip() == normalized_tmdb
+        )
+    ]
+
+
 class ReplacementServer:
     def __init__(
         self,
@@ -150,10 +173,17 @@ class ReplacementServer:
                     if mode == "caps":
                         self.send_body(200, CAPS_XML, "application/xml")
                     elif mode in {"search", "movie"}:
+                        entries = []
+                        if mode == "movie":
+                            entries = matching_movie_entries(
+                                owner.catalog.entries(),
+                                query.get("imdbid", [""])[0],
+                                query.get("tmdbid", [""])[0],
+                            )
                         self.send_body(
                             200,
                             build_feed(
-                                owner.catalog.entries(), owner.external_url, owner.api_key
+                                entries, owner.external_url, owner.api_key
                             ),
                             "application/rss+xml",
                         )
