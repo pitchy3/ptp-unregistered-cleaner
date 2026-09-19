@@ -10,6 +10,7 @@ def test_state_json_write_read(tmp_path: Path) -> None:
         last_seen_infohashes_count=2,
         removed_hashes_by_instance={"main": ["abc"]},
         skipped_hashes=[{"instance": "main", "hash": "def", "reason": "cap"}],
+        replacement_requests={"old-hash": "123"},
     )
     save_state(path, state)
     loaded = load_state(path)

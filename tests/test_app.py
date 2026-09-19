@@ -19,6 +19,11 @@ from ptp_unregistered_cleaner.qbittorrent_client import (
 from ptp_unregistered_cleaner.state import load_state
 
 
+class _TrackerClient:
+    def get_trackers(self, _torrent_hash: str) -> list[Tracker]:
+        return [Tracker("https://passthepopcorn.me/announce")]
+
+
 def _config(tmp_path: Path) -> Config:
     return Config(
         app=AppConfig(state_path=str(tmp_path / "state.json")),
@@ -118,3 +123,59 @@ def test_run_once_records_deletions_completed_before_instance_failure(
 
     state = load_state(tmp_path / "state.json")
     assert state.removed_hashes_by_instance == {"main": ["first"]}
+
+
+def test_failed_replacement_is_preserved_for_retry() -> None:
+    match = app.Match(
+        "main",
+        Torrent("old-hash", "Old.Release"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="30"
+        ),
+    )
+
+    class FailingCoordinator:
+        def replace(self, _match: app.Match) -> None:
+            raise RuntimeError("Radarr rejected it")
+
+    skipped = []
+    requests = {}
+    removable = app._request_replacements(
+        [match],
+        FailingCoordinator(),
+        _TrackerClient(),
+        "passthepopcorn",
+        False,
+        True,
+        requests,
+        skipped,
+    )
+    assert removable == []
+    assert requests == {}
+    assert "preserved for retry" in skipped[0][1]
+
+
+def test_checkpointed_replacement_is_not_requested_twice() -> None:
+    match = app.Match(
+        "main",
+        Torrent("OLD-HASH", "Old.Release"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="30"
+        ),
+    )
+
+    class UnexpectedCoordinator:
+        def replace(self, _match: app.Match) -> None:
+            raise AssertionError("replacement should not be requested twice")
+
+    removable = app._request_replacements(
+        [match],
+        UnexpectedCoordinator(),
+        _TrackerClient(),
+        "passthepopcorn",
+        False,
+        True,
+        {"old-hash": "30"},
+        [],
+    )
+    assert removable == [match]

@@ -42,6 +42,24 @@ class UnregisteredTorrent:
     ip: str | None = None
     user_agent: str | None = None
 
+    @property
+    def replacement_torrent_id(self) -> str | None:
+        """Return PTP's designated successor only when Reason is a numeric torrent ID."""
+        value = (self.reason or "").strip()
+        return value if value.isdigit() and value != self.torrent_id else None
+
+
+@dataclass(frozen=True)
+class ReplacementTorrent:
+    torrent_id: str
+    group_id: str
+    title: str
+    size: int
+    imdb_id: str | None = None
+    tmdb_id: str | None = None
+    seeders: int = 0
+    peers: int = 0
+
 
 def normalize_infohash(value: Any) -> str | None:
     if not isinstance(value, str):
@@ -124,6 +142,64 @@ class PtpClient:
         )
         return all_torrents
 
+    def fetch_replacement(self, group_id: str, torrent_id: str) -> ReplacementTorrent:
+        """Fetch and validate a PTP-designated replacement torrent's metadata."""
+        import httpx
+
+        url = urljoin(f"{self.config.base_url}/", "ajax.php")
+        headers = {
+            "ApiUser": self.credentials.ptp_api_user,
+            "ApiKey": self.credentials.ptp_api_key,
+        }
+        try:
+            response = httpx.get(
+                url,
+                params={"action": "torrent", "id": torrent_id},
+                headers=headers,
+                timeout=self.config.timeout_seconds,
+            )
+        except httpx.HTTPError as exc:
+            raise PtpClientError(
+                f"Unable to fetch replacement torrent {torrent_id}: {exc}"
+            ) from exc
+        if response.status_code != 200:
+            raise PtpClientError(
+                f"PTP returned HTTP {response.status_code} for replacement torrent {torrent_id}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise PtpClientError("PTP replacement metadata was not valid JSON") from exc
+        return extract_replacement_torrent(payload, group_id, torrent_id)
+
+    def download_torrent(self, torrent_id: str) -> bytes:
+        """Download one authenticated .torrent while keeping PTP credentials server-side."""
+        import httpx
+
+        url = urljoin(f"{self.config.base_url}/", "torrents.php")
+        headers = {
+            "ApiUser": self.credentials.ptp_api_user,
+            "ApiKey": self.credentials.ptp_api_key,
+        }
+        try:
+            response = httpx.get(
+                url,
+                params={"action": "download", "id": torrent_id},
+                headers=headers,
+                timeout=self.config.timeout_seconds,
+            )
+        except httpx.HTTPError as exc:
+            raise PtpClientError(f"Unable to download PTP torrent {torrent_id}: {exc}") from exc
+        if response.status_code != 200:
+            raise PtpClientError(
+                f"PTP returned HTTP {response.status_code} downloading torrent {torrent_id}"
+            )
+        if not response.content.startswith(b"d"):
+            raise PtpClientError(
+                f"PTP response for torrent {torrent_id} was not a bencoded torrent"
+            )
+        return response.content
+
     def _fetch_page(self, client: Any, page: int) -> dict[str, Any]:
         params = {
             "action": "unregistered",
@@ -199,3 +275,53 @@ def _int_or_default(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def extract_replacement_torrent(
+    payload: dict[str, Any], expected_group_id: str, expected_torrent_id: str
+) -> ReplacementTorrent:
+    """Normalize PTP's torrent-detail response and enforce the same-group invariant."""
+    response = payload.get("response", payload)
+    if not isinstance(response, dict):
+        raise PtpClientError("PTP replacement metadata response was not an object")
+    torrent = response.get("torrent", response.get("Torrent"))
+    group = response.get("group", response.get("Group", {}))
+    if not isinstance(torrent, dict):
+        raise PtpClientError("PTP replacement metadata did not include a torrent")
+    if not isinstance(group, dict):
+        group = {}
+
+    def pick(source: dict[str, Any], *keys: str) -> Any:
+        lowered = {str(key).lower(): value for key, value in source.items()}
+        return next((lowered[key.lower()] for key in keys if key.lower() in lowered), None)
+
+    actual_id = _optional_str(pick(torrent, "id", "torrentId"))
+    actual_group = _optional_str(
+        pick(torrent, "groupId", "movieId") or pick(group, "id", "groupId", "movieId")
+    )
+    if actual_id != expected_torrent_id:
+        raise PtpClientError(
+            f"PTP returned torrent {actual_id!r}, expected {expected_torrent_id!r}"
+        )
+    if actual_group != expected_group_id:
+        raise PtpClientError(
+            f"Replacement torrent {actual_id} belongs to group {actual_group!r}, "
+            f"not {expected_group_id!r}"
+        )
+    title = _optional_str(pick(torrent, "releaseName", "release", "fileName", "name"))
+    if not title:
+        raise PtpClientError("PTP replacement metadata did not include a release name")
+    size = _int_or_default(pick(torrent, "size", "fileSize"), 0)
+    if size <= 0:
+        raise PtpClientError("PTP replacement metadata did not include a positive size")
+    imdb = _optional_str(pick(group, "imdbId", "imdb"))
+    tmdb = _optional_str(pick(group, "tmdbId", "tmdb"))
+    seeders = _int_or_default(pick(torrent, "seeders"), 0)
+    leechers = _int_or_default(pick(torrent, "leechers"), 0)
+    if seeders <= 0:
+        raise PtpClientError("PTP replacement torrent has no seeders")
+    if imdb and imdb.isdigit():
+        imdb = f"tt{imdb}"
+    return ReplacementTorrent(
+        actual_id, actual_group, title, size, imdb, tmdb, seeders, seeders + leechers
+    )

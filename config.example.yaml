@@ -18,6 +18,23 @@ matching:
   include_tags: []
   exclude_tags: []
 
+# Optional: ask Radarr to acquire PTP-designated trump replacements before
+# removing the obsolete qBittorrent entry. Keep disabled through dry-run setup.
+radarr:
+  enabled: false
+  url: http://radarr:7878
+  # Replace with ${RADARR_API_KEY} when enabling.
+  api_key: ""
+  timeout_seconds: 30
+  torznab_host: 0.0.0.0
+  torznab_port: 9697
+  # Address Radarr can use to reach this container/host (no trailing /api).
+  torznab_external_url: http://ptp-unregistered-cleaner:9697
+  # Replace with ${TORZNAB_API_KEY} when enabling.
+  torznab_api_key: ""
+  # Leave true: an unsafe/failed replacement preserves the old entry for retry.
+  preserve_on_failure: true
+
 qbittorrent:
   - name: main
     url: http://qbittorrent:8080

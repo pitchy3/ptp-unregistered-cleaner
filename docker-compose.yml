@@ -9,4 +9,6 @@ services:
     volumes:
       - ./config.yaml:/config/config.yaml:ro
       - ./data:/data
+    ports:
+      - "9697:9697"
     restart: unless-stopped

@@ -56,6 +56,19 @@ class QBittorrentConfig:
 
 
 @dataclass(frozen=True)
+class RadarrConfig:
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    timeout_seconds: float = 30
+    torznab_host: str = "0.0.0.0"
+    torznab_port: int = 9697
+    torznab_external_url: str = ""
+    torznab_api_key: str = ""
+    preserve_on_failure: bool = True
+
+
+@dataclass(frozen=True)
 class Credentials:
     ptp_api_user: str
     ptp_api_key: str
@@ -68,6 +81,7 @@ class Config:
     matching: MatchingConfig
     qbittorrent: list[QBittorrentConfig]
     credentials: Credentials
+    radarr: RadarrConfig = field(default_factory=RadarrConfig)
 
 
 def interpolate_env(value: Any, environ: dict[str, str] | None = None) -> Any:
@@ -119,6 +133,7 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> Conf
     ptp_raw = data.get("ptp", {}) or {}
     matching_raw = data.get("matching", {}) or {}
     qbit_raw = data.get("qbittorrent", []) or []
+    radarr_raw = data.get("radarr", {}) or {}
 
     if not isinstance(qbit_raw, list) or not qbit_raw:
         raise ConfigError("At least one qbittorrent instance must be configured")
@@ -179,8 +194,40 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> Conf
         ptp_api_user=require_env("PTP_API_USER", env),
         ptp_api_key=require_env("PTP_API_KEY", env),
     )
+    radarr_enabled = bool(radarr_raw.get("enabled", False))
+    radarr = RadarrConfig(
+        enabled=radarr_enabled,
+        url=str(radarr_raw.get("url", "")).rstrip("/"),
+        api_key=str(radarr_raw.get("api_key", "")),
+        timeout_seconds=float(radarr_raw.get("timeout_seconds", 30)),
+        torznab_host=str(radarr_raw.get("torznab_host", "0.0.0.0")),
+        torznab_port=int(radarr_raw.get("torznab_port", 9697)),
+        torznab_external_url=str(radarr_raw.get("torznab_external_url", "")).rstrip("/"),
+        torznab_api_key=str(radarr_raw.get("torznab_api_key", "")),
+        preserve_on_failure=bool(radarr_raw.get("preserve_on_failure", True)),
+    )
+    if radarr_enabled:
+        missing = [
+            name
+            for name, value in (
+                ("url", radarr.url),
+                ("api_key", radarr.api_key),
+                ("torznab_external_url", radarr.torznab_external_url),
+                ("torznab_api_key", radarr.torznab_api_key),
+            )
+            if not value
+        ]
+        if missing:
+            raise ConfigError(f"radarr is enabled but missing: {', '.join(missing)}")
+        if not 1 <= radarr.torznab_port <= 65535:
+            raise ConfigError("radarr.torznab_port must be between 1 and 65535")
     return Config(
-        app=app, ptp=ptp, matching=matching, qbittorrent=instances, credentials=credentials
+        app=app,
+        ptp=ptp,
+        matching=matching,
+        qbittorrent=instances,
+        credentials=credentials,
+        radarr=radarr,
     )
 
 
@@ -195,6 +242,23 @@ def sanitized_config_summary(config: Config) -> dict[str, Any]:
             for item in config.qbittorrent
         ],
         "credentials": {"ptp_api_user": "***", "ptp_api_key": "***"},
+        "radarr": {
+            **radarr_without_secrets(config.radarr),
+            "api_key": "***" if config.radarr.api_key else "",
+            "torznab_api_key": "***" if config.radarr.torznab_api_key else "",
+        },
+    }
+
+
+def radarr_without_secrets(config: RadarrConfig) -> dict[str, Any]:
+    return {
+        "enabled": config.enabled,
+        "url": config.url,
+        "timeout_seconds": config.timeout_seconds,
+        "torznab_host": config.torznab_host,
+        "torznab_port": config.torznab_port,
+        "torznab_external_url": config.torznab_external_url,
+        "preserve_on_failure": config.preserve_on_failure,
     }
 
 
