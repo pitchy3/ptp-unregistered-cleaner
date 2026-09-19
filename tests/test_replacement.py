@@ -64,6 +64,27 @@ def test_feed_uses_real_title_and_server_side_download_url() -> None:
     assert 'name="seeders" value="4"' in feed
 
 
+def test_each_radarr_catalog_exposes_only_its_own_replacements() -> None:
+    hd = ReplacementCatalog()
+    uhd = ReplacementCatalog()
+    hd.publish(
+        ReplacementTorrent(
+            "34", "56", "Movie.1080p-GROUP", 1234, "tt1", seeders=1, peers=1
+        )
+    )
+    uhd.publish(
+        ReplacementTorrent(
+            "35", "56", "Movie.2160p-GROUP", 5678, "tt1", seeders=1, peers=1
+        )
+    )
+    hd_feed = build_feed(hd.entries(), "http://cleaner:9697", "hd-key").decode()
+    uhd_feed = build_feed(uhd.entries(), "http://cleaner:9698", "uhd-key").decode()
+    assert "Movie.1080p-GROUP" in hd_feed
+    assert "Movie.2160p-GROUP" not in hd_feed
+    assert "Movie.2160p-GROUP" in uhd_feed
+    assert "Movie.1080p-GROUP" not in uhd_feed
+
+
 def test_torznab_server_requires_proxy_key_for_search_and_download() -> None:
     class Ptp:
         def download_torrent(self, torrent_id: str) -> bytes:

@@ -9,7 +9,14 @@ from collections import Counter
 from contextlib import ExitStack
 from pathlib import Path
 
-from .config import Config, ConfigError, load_config, sanitized_config_summary
+from .config import (
+    Config,
+    ConfigError,
+    RadarrConfig,
+    load_config,
+    radarr_route,
+    sanitized_config_summary,
+)
 from .matcher import Match, find_matches, remove_matches, tracker_verified
 from .ptp_client import PtpClient
 from .qbittorrent_client import QBittorrentClient, QBittorrentClientError
@@ -36,7 +43,7 @@ def run_once(
     config: Config | None = None,
     *,
     ptp_client: PtpClient | None = None,
-    coordinator: ReplacementCoordinator | None = None,
+    coordinators: dict[str, ReplacementCoordinator] | None = None,
 ) -> None:
     cfg = config or load_config_from_env()
     LOGGER.info(
@@ -55,22 +62,10 @@ def run_once(
     all_instances_processed = True
 
     with ExitStack() as stack:
-        active_coordinator = coordinator
-        if cfg.radarr.enabled and active_coordinator is None:
-            catalog = ReplacementCatalog()
-            server = ReplacementServer(
-                cfg.radarr.torznab_host,
-                cfg.radarr.torznab_port,
-                cfg.radarr.torznab_external_url,
-                cfg.radarr.torznab_api_key,
-                catalog,
-                ptp_client,
-            )
-            stack.enter_context(server)
-            active_coordinator = ReplacementCoordinator(
-                ptp_client, RadarrClient(cfg.radarr), catalog
-            )
-            LOGGER.info("Replacement Torznab server started on port %s", cfg.radarr.torznab_port)
+        active_coordinators = coordinators
+        if cfg.radarr and active_coordinators is None:
+            active_coordinators = _start_replacement_services(stack, cfg, ptp_client)
+        active_coordinators = active_coordinators or {}
 
         for instance in cfg.qbittorrent:
             removed: list[Match] = []
@@ -78,9 +73,12 @@ def run_once(
             try:
                 with QBittorrentClient(instance) as client:
                     torrents = client.list_torrents()
-                    remaining_torrent_copies.update(
-                        torrent.hash.strip().lower() for torrent in torrents
-                    )
+                    for torrent in torrents:
+                        route = radarr_route(cfg.radarr, instance.name, torrent.category)
+                        if route:
+                            remaining_torrent_copies[
+                                _checkpoint_key(route, torrent.hash)
+                            ] += 1
                     matches, filtered = find_matches(
                         instance.name, torrents, ptp_torrents, cfg.matching
                     )
@@ -92,11 +90,11 @@ def run_once(
                     requests_before = dict(replacement_requests)
                     matches = _request_replacements(
                         matches,
-                        active_coordinator,
+                        cfg.radarr,
+                        active_coordinators,
                         client,
                         cfg.matching.require_tracker_contains,
                         cfg.app.dry_run,
-                        cfg.radarr.preserve_on_failure,
                         replacement_requests,
                         skipped,
                     )
@@ -126,8 +124,13 @@ def run_once(
                     match.torrent.hash for match in removed
                 )
                 for match in removed:
-                    normalized_hash = match.torrent.hash.strip().lower()
-                    remaining_torrent_copies[normalized_hash] -= 1
+                    route = radarr_route(
+                        cfg.radarr, instance.name, match.torrent.category
+                    )
+                    if route:
+                        remaining_torrent_copies[
+                            _checkpoint_key(route, match.torrent.hash)
+                        ] -= 1
             for match, reason in skipped:
                 skipped_state.append(
                     {"instance": instance.name, "hash": match.torrent.hash, "reason": reason}
@@ -164,21 +167,35 @@ def _prune_replacement_requests(
 
 def _request_replacements(
     matches: list[Match],
-    coordinator: ReplacementCoordinator | None,
+    radarr_configs: list[RadarrConfig],
+    coordinators: dict[str, ReplacementCoordinator],
     qbit_client: object,
     require_tracker_contains: str,
     dry_run: bool,
-    preserve_on_failure: bool,
     replacement_requests: dict[str, str],
     skipped: list[tuple[Match, str]],
 ) -> list[Match]:
-    if coordinator is None:
-        return matches
     removable: list[Match] = []
     for match in matches:
         replacement_id = match.ptp.replacement_torrent_id
         if replacement_id is None:
             removable.append(match)
+            continue
+        route = radarr_route(
+            radarr_configs, match.instance_name, match.torrent.category
+        )
+        if route is None:
+            LOGGER.info(
+                "No Radarr route for qBittorrent instance=%s category=%r; "
+                "continuing cleanup without automatic replacement",
+                match.instance_name,
+                match.torrent.category,
+            )
+            removable.append(match)
+            continue
+        coordinator = coordinators.get(route.name.casefold())
+        if coordinator is None:
+            skipped.append((match, f"Radarr route {route.name!r} is unavailable"))
             continue
         if not tracker_verified(qbit_client, match.torrent.hash, require_tracker_contains):
             # remove_matches will record the normal tracker-verification skip.
@@ -186,28 +203,30 @@ def _request_replacements(
             continue
         if dry_run:
             LOGGER.info(
-                "DRY RUN: would request PTP replacement torrent %s through Radarr before cleanup",
+                "DRY RUN: would request PTP replacement torrent %s through Radarr %s "
+                "before cleanup",
                 replacement_id,
+                route.name,
             )
             removable.append(match)
             continue
-        old_hash = match.torrent.hash.strip().lower()
-        if replacement_requests.get(old_hash) == replacement_id:
+        checkpoint = _checkpoint_key(route, match.torrent.hash)
+        if replacement_requests.get(checkpoint) == replacement_id:
             LOGGER.info(
                 "Replacement %s was already requested for %s; continuing cleanup",
                 replacement_id,
-                old_hash,
+                checkpoint,
             )
             removable.append(match)
             continue
         try:
             coordinator.replace(match)
-            replacement_requests[old_hash] = replacement_id
+            replacement_requests[checkpoint] = replacement_id
         except Exception as exc:
             LOGGER.exception(
                 "Unable to request replacement %s for %s", replacement_id, match.torrent.hash
             )
-            if preserve_on_failure:
+            if route.preserve_on_failure:
                 skipped.append((match, f"replacement failed; preserved for retry: {exc}"))
                 continue
         removable.append(match)
@@ -225,45 +244,59 @@ def run_daemon(config: Config | None = None) -> None:
     LOGGER.info("Starting daemon with interval_days=%s", cfg.app.interval_days)
     with ExitStack() as stack:
         ptp_client = None
-        coordinator = None
-        if cfg.radarr.enabled:
+        coordinators = None
+        if cfg.radarr:
             ptp_client = PtpClient(cfg.ptp, cfg.credentials)
-            catalog = ReplacementCatalog()
-            server = ReplacementServer(
-                cfg.radarr.torznab_host,
-                cfg.radarr.torznab_port,
-                cfg.radarr.torznab_external_url,
-                cfg.radarr.torznab_api_key,
-                catalog,
-                ptp_client,
-            )
-            stack.enter_context(server)
-            coordinator = ReplacementCoordinator(
-                ptp_client, RadarrClient(cfg.radarr), catalog
-            )
-            LOGGER.info(
-                "Replacement Torznab server listening continuously on port %s",
-                cfg.radarr.torznab_port,
-            )
+            coordinators = _start_replacement_services(stack, cfg, ptp_client)
         if cfg.app.run_on_startup:
-            _run_daemon_cleanup(cfg, ptp_client, coordinator)
+            _run_daemon_cleanup(cfg, ptp_client, coordinators)
         while True:
             LOGGER.info("Sleeping %.0f seconds until next cleanup run", interval_seconds)
             time.sleep(interval_seconds)
-            _run_daemon_cleanup(cfg, ptp_client, coordinator)
+            _run_daemon_cleanup(cfg, ptp_client, coordinators)
 
 
 def _run_daemon_cleanup(
     config: Config,
     ptp_client: PtpClient | None = None,
-    coordinator: ReplacementCoordinator | None = None,
+    coordinators: dict[str, ReplacementCoordinator] | None = None,
 ) -> None:
     try:
-        if ptp_client is None and coordinator is None:
+        if ptp_client is None and coordinators is None:
             run_once(config)
         else:
-            run_once(config, ptp_client=ptp_client, coordinator=coordinator)
+            run_once(config, ptp_client=ptp_client, coordinators=coordinators)
     except ConfigError:
         raise
     except Exception:
         LOGGER.exception("Cleanup run failed; daemon will retry after the configured interval")
+
+
+def _start_replacement_services(
+    stack: ExitStack, config: Config, ptp_client: PtpClient
+) -> dict[str, ReplacementCoordinator]:
+    coordinators: dict[str, ReplacementCoordinator] = {}
+    for radarr in config.radarr:
+        catalog = ReplacementCatalog()
+        server = ReplacementServer(
+            radarr.torznab_host,
+            radarr.torznab_port,
+            radarr.torznab_external_url,
+            radarr.torznab_api_key,
+            catalog,
+            ptp_client,
+        )
+        stack.enter_context(server)
+        coordinators[radarr.name.casefold()] = ReplacementCoordinator(
+            ptp_client, RadarrClient(radarr), catalog
+        )
+        LOGGER.info(
+            "Replacement Torznab server for Radarr %s listening on port %s",
+            radarr.name,
+            radarr.torznab_port,
+        )
+    return coordinators
+
+
+def _checkpoint_key(radarr: RadarrConfig, torrent_hash: str) -> str:
+    return "|".join((radarr.name.casefold(), torrent_hash.strip().lower()))

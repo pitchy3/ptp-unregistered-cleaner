@@ -10,6 +10,7 @@ from ptp_unregistered_cleaner.config import (
     MatchingConfig,
     PtpConfig,
     QBittorrentConfig,
+    RadarrConfig,
 )
 from ptp_unregistered_cleaner.ptp_client import UnregisteredTorrent
 from ptp_unregistered_cleaner.qbittorrent_client import (
@@ -23,6 +24,17 @@ from ptp_unregistered_cleaner.state import load_state
 class _TrackerClient:
     def get_trackers(self, _torrent_hash: str) -> list[Tracker]:
         return [Tracker("https://passthepopcorn.me/announce")]
+
+
+def _radarr_route() -> RadarrConfig:
+    return RadarrConfig(
+        name="movies",
+        url="http://radarr",
+        api_key="key",
+        qbittorrent_instances=["main"],
+        torznab_external_url="http://cleaner:9697",
+        torznab_api_key="proxy-key",
+    )
 
 
 def _config(tmp_path: Path) -> Config:
@@ -143,11 +155,11 @@ def test_failed_replacement_is_preserved_for_retry() -> None:
     requests = {}
     removable = app._request_replacements(
         [match],
-        FailingCoordinator(),
+        [_radarr_route()],
+        {"movies": FailingCoordinator()},
         _TrackerClient(),
         "passthepopcorn",
         False,
-        True,
         requests,
         skipped,
     )
@@ -171,12 +183,106 @@ def test_checkpointed_replacement_is_not_requested_twice() -> None:
 
     removable = app._request_replacements(
         [match],
-        UnexpectedCoordinator(),
+        [_radarr_route()],
+        {"movies": UnexpectedCoordinator()},
         _TrackerClient(),
         "passthepopcorn",
         False,
-        True,
-        {"old-hash": "30"},
+        {"movies|old-hash": "30"},
+        [],
+    )
+    assert removable == [match]
+
+
+def test_replacements_are_isolated_by_category_and_radarr_target() -> None:
+    routes = [
+        RadarrConfig(
+            name="hd",
+            url="http://hd",
+            api_key="key",
+            qbittorrent_instances=["shared"],
+            qbittorrent_categories=["radarr"],
+            torznab_external_url="http://cleaner:9697",
+            torznab_api_key="hd-key",
+        ),
+        RadarrConfig(
+            name="uhd",
+            url="http://uhd",
+            api_key="key",
+            qbittorrent_instances=["shared"],
+            qbittorrent_categories=["radarr-4k"],
+            torznab_port=9698,
+            torznab_external_url="http://cleaner:9698",
+            torznab_api_key="uhd-key",
+        ),
+    ]
+    calls: dict[str, list[str]] = {"hd": [], "uhd": []}
+
+    class Coordinator:
+        def __init__(self, target: str) -> None:
+            self.target = target
+
+        def replace(self, match: app.Match) -> None:
+            calls[self.target].append(match.torrent.category)
+
+    matches = [
+        app.Match(
+            "shared",
+            Torrent("hd-hash", "HD", "radarr"),
+            UnregisteredTorrent(
+                "hd-hash", torrent_id="10", group_id="20", reason="30"
+            ),
+        ),
+        app.Match(
+            "shared",
+            Torrent("uhd-hash", "UHD", "radarr-4k"),
+            UnregisteredTorrent(
+                "uhd-hash", torrent_id="11", group_id="21", reason="31"
+            ),
+        ),
+    ]
+    requests = {}
+    removable = app._request_replacements(
+        matches,
+        routes,
+        {"hd": Coordinator("hd"), "uhd": Coordinator("uhd")},
+        _TrackerClient(),
+        "passthepopcorn",
+        False,
+        requests,
+        [],
+    )
+    assert removable == matches
+    assert calls == {"hd": ["radarr"], "uhd": ["radarr-4k"]}
+    assert requests == {"hd|hd-hash": "30", "uhd|uhd-hash": "31"}
+
+
+def test_unmapped_category_does_not_use_a_radarr_coordinator() -> None:
+    match = app.Match(
+        "main",
+        Torrent("old-hash", "Old.Release", "manual"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="30"
+        ),
+    )
+    removable = app._request_replacements(
+        [match],
+        [
+            RadarrConfig(
+                name="movies",
+                url="http://radarr",
+                api_key="key",
+                qbittorrent_instances=["main"],
+                qbittorrent_categories=["radarr"],
+                torznab_external_url="http://cleaner:9697",
+                torznab_api_key="proxy-key",
+            )
+        ],
+        {},
+        _TrackerClient(),
+        "passthepopcorn",
+        False,
+        {},
         [],
     )
     assert removable == [match]

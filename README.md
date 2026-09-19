@@ -124,8 +124,38 @@ The loader supports simple `${VAR_NAME}` interpolation. If a referenced variable
 
 ### `radarr` (optional trump replacement)
 
-Replacement mode is disabled by default. When enabled, a numeric PTP `Reason` value is
-treated as PTP's designated successor torrent. Before any explicit Radarr grab, the cleaner:
+Replacement mode is disabled when `radarr` is an empty list. Each entry explicitly routes
+one or more qBittorrent instances—and optionally selected categories—to one Radarr. The
+cleaner never guesses from resolution or release name.
+
+```yaml
+radarr:
+  - name: movies-1080p
+    url: http://radarr-1080p:7878
+    api_key: ${RADARR_1080P_API_KEY}
+    qbittorrent_instances: [main]
+    qbittorrent_categories: [radarr]
+    torznab_port: 9697
+    torznab_external_url: http://ptp-unregistered-cleaner:9697
+    torznab_api_key: ${TORZNAB_1080P_API_KEY}
+
+  - name: movies-4k
+    url: http://radarr-4k:7878
+    api_key: ${RADARR_4K_API_KEY}
+    qbittorrent_instances: [seedbox]
+    qbittorrent_categories: []
+    torznab_port: 9698
+    torznab_external_url: http://ptp-unregistered-cleaner:9698
+    torznab_api_key: ${TORZNAB_4K_API_KEY}
+```
+
+An empty `qbittorrent_categories` list matches every category on the named instance. When
+categories are supplied, only those categories use that Radarr. Unmapped torrents continue
+through ordinary unregistered cleanup without automatic replacement. Startup rejects unknown
+qBittorrent names, duplicate Radarr names/listeners, and overlapping routes.
+
+For a routed torrent, a numeric PTP `Reason` value is treated as PTP's designated successor.
+Before any explicit Radarr grab, the cleaner:
 
 1. fetches the successor's metadata from PTP;
 2. verifies the successor belongs to the same PTP movie group;
@@ -140,30 +170,36 @@ the obsolete qBittorrent entry is retained so the next scheduled run can retry s
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `enabled` | `false` | Enable verified PTP→Radarr replacements. |
+| `name` | required | Unique route/target name. |
 | `url` | none | Radarr base URL reachable from the cleaner. |
-| `api_key` | none | Radarr API key; use `${RADARR_API_KEY}`. |
+| `api_key` | none | API key for this Radarr. |
+| `qbittorrent_instances` | none | qBittorrent instance names routed to this Radarr. |
+| `qbittorrent_categories` | `[]` | Optional category allowlist; empty matches all. |
 | `timeout_seconds` | `30` | Radarr HTTP timeout. |
 | `torznab_host` | `0.0.0.0` | Local bind address. |
-| `torznab_port` | `9697` | Local proxy port. |
+| `torznab_port` | `9697 + entry index` | Unique local proxy port. |
 | `torznab_external_url` | none | Proxy origin reachable from Radarr, without `/api`. |
-| `torznab_api_key` | none | Separate random proxy key; use `${TORZNAB_API_KEY}`. |
+| `torznab_api_key` | none | Separate random key for this target's proxy. |
 | `preserve_on_failure` | `true` | Keep the old qBittorrent entry when replacement fails. |
 
-Add a **Generic Torznab** indexer in Radarr with:
+Add a separate **Generic Torznab** indexer to each Radarr using its matching route:
 
 ```text
-URL:     http://CLEANER_HOST:9697/api
-API key: the same value as TORZNAB_API_KEY
+1080p Radarr URL:     http://CLEANER_HOST:9697/api
+1080p Radarr API key: TORZNAB_1080P_API_KEY
+
+4K Radarr URL:        http://CLEANER_HOST:9698/api
+4K Radarr API key:    TORZNAB_4K_API_KEY
 ```
 
-Enable movie search. The daemon keeps this endpoint available continuously. Docker Compose
-publishes port `9697`; if Radarr shares the same Docker network, you may instead use the
-cleaner's service name and avoid publishing the port outside the host.
+Each endpoint has an isolated replacement catalog, so one Radarr cannot discover another
+target's candidates. Enable movie search on both indexers. The daemon keeps the endpoints
+available continuously. Publish every configured port or use the cleaner's service name when
+the containers share a Docker network.
 
-Start with both `app.dry_run: true` and `radarr.enabled: false`. Confirm ordinary matching,
-configure/test the Torznab indexer, then enable replacement mode while still in dry-run.
-Only set `dry_run: false` after the logged candidates and replacement IDs are correct.
+Start with `app.dry_run: true` and `radarr: []`. Confirm ordinary matching, then add and test
+the Radarr routes while still in dry-run. Only set `dry_run: false` after the logged route,
+candidate, and replacement IDs are correct.
 
 ## How matching works
 
