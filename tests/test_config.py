@@ -118,3 +118,26 @@ def test_ambiguous_radarr_routes_are_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError, match="Ambiguous radarr routes"):
         load_config(config, {"PTP_API_USER": "user", "PTP_API_KEY": "key"})
+
+
+def test_radarr_torznab_ports_must_be_unique_across_bind_hosts(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "qbittorrent:\n"
+        "  - name: hd\n    url: http://hd-qbit\n    username: user\n    password: pass\n"
+        "  - name: uhd\n    url: http://uhd-qbit\n    username: user\n    password: pass\n"
+        "radarr:\n"
+        "  - name: hd\n    url: http://hd\n    api_key: key\n"
+        "    qbittorrent_instances: [hd]\n"
+        "    torznab_host: 0.0.0.0\n    torznab_port: 9697\n"
+        "    torznab_external_url: http://cleaner:9697\n"
+        "    torznab_api_key: hd-proxy\n"
+        "  - name: uhd\n    url: http://uhd\n    api_key: key\n"
+        "    qbittorrent_instances: [uhd]\n"
+        "    torznab_host: 127.0.0.1\n    torznab_port: 9697\n"
+        "    torznab_external_url: http://localhost:9697\n"
+        "    torznab_api_key: uhd-proxy\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="Multiple radarr entries use Torznab port 9697"):
+        load_config(config, {"PTP_API_USER": "user", "PTP_API_KEY": "key"})
