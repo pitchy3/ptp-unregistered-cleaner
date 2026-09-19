@@ -304,19 +304,18 @@ def _load_radarr_configs(
 
 def _validate_radarr_routes(configs: list[RadarrConfig]) -> None:
     names: set[str] = set()
-    ports: set[tuple[str, int]] = set()
+    ports: set[int] = set()
     external_urls: set[str] = set()
     for config in configs:
         normalized_name = config.name.casefold()
         if normalized_name in names:
             raise ConfigError(f"Duplicate radarr name: {config.name}")
         names.add(normalized_name)
-        listener = (config.torznab_host, config.torznab_port)
-        if listener in ports:
+        if config.torznab_port in ports:
             raise ConfigError(
-                f"Multiple radarr entries use Torznab listener {listener[0]}:{listener[1]}"
+                f"Multiple radarr entries use Torznab port {config.torznab_port}"
             )
-        ports.add(listener)
+        ports.add(config.torznab_port)
         normalized_url = config.torznab_external_url.casefold()
         if normalized_url in external_urls:
             raise ConfigError(
