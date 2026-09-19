@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections import Counter
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -50,6 +51,8 @@ def run_once(
     skipped_state: list[dict[str, str]] = []
     previous_state = load_state(cfg.app.state_path)
     replacement_requests = dict(previous_state.replacement_requests)
+    remaining_torrent_copies: Counter[str] = Counter()
+    all_instances_processed = True
 
     with ExitStack() as stack:
         active_coordinator = coordinator
@@ -75,6 +78,9 @@ def run_once(
             try:
                 with QBittorrentClient(instance) as client:
                     torrents = client.list_torrents()
+                    remaining_torrent_copies.update(
+                        torrent.hash.strip().lower() for torrent in torrents
+                    )
                     matches, filtered = find_matches(
                         instance.name, torrents, ptp_torrents, cfg.matching
                     )
@@ -111,6 +117,7 @@ def run_once(
                         skipped_results=skipped,
                     )
             except QBittorrentClientError:
+                all_instances_processed = False
                 LOGGER.exception(
                     "qBittorrent instance %s failed; skipping this instance", instance.name
                 )
@@ -119,11 +126,16 @@ def run_once(
                     match.torrent.hash for match in removed
                 )
                 for match in removed:
-                    replacement_requests.pop(match.torrent.hash.strip().lower(), None)
+                    normalized_hash = match.torrent.hash.strip().lower()
+                    remaining_torrent_copies[normalized_hash] -= 1
             for match, reason in skipped:
                 skipped_state.append(
                     {"instance": instance.name, "hash": match.torrent.hash, "reason": reason}
                 )
+
+        _prune_replacement_requests(
+            replacement_requests, remaining_torrent_copies, all_instances_processed
+        )
 
     save_state(
         cfg.app.state_path,
@@ -135,6 +147,19 @@ def run_once(
         ),
     )
     LOGGER.info("Cleanup run completed successfully")
+
+
+def _prune_replacement_requests(
+    replacement_requests: dict[str, str],
+    remaining_torrent_copies: Counter[str],
+    all_instances_processed: bool,
+) -> None:
+    """Drop checkpoints only after every configured instance confirms no copy remains."""
+    if not all_instances_processed:
+        return
+    for torrent_hash in list(replacement_requests):
+        if remaining_torrent_copies[torrent_hash] <= 0:
+            replacement_requests.pop(torrent_hash, None)
 
 
 def _request_replacements(

@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from pathlib import Path
 
 from ptp_unregistered_cleaner import app
@@ -179,3 +180,21 @@ def test_checkpointed_replacement_is_not_requested_twice() -> None:
         [],
     )
     assert removable == [match]
+
+
+def test_replacement_checkpoint_waits_for_all_instance_copies() -> None:
+    requests = {"old-hash": "30"}
+    remaining = Counter({"old-hash": 1})
+
+    app._prune_replacement_requests(requests, remaining, True)
+    assert requests == {"old-hash": "30"}
+
+    remaining["old-hash"] = 0
+    app._prune_replacement_requests(requests, remaining, True)
+    assert requests == {}
+
+
+def test_replacement_checkpoint_survives_offline_instance() -> None:
+    requests = {"old-hash": "30"}
+    app._prune_replacement_requests(requests, Counter(), False)
+    assert requests == {"old-hash": "30"}
