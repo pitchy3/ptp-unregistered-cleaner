@@ -40,8 +40,14 @@ class ReplacementCoordinator:
             )
         movie_id = int(movie["id"])
         entry = self.catalog.publish(replacement)
-        release = self.radarr.find_release(movie_id, entry.guid)
-        self.radarr.grab(release, movie_id)
+        try:
+            release = self.radarr.find_release(movie_id, entry.guid)
+            self.radarr.grab(release, movie_id)
+        finally:
+            # The catalog exists only to let Radarr discover and fetch this exact
+            # candidate during the explicit grab. Never leave a rejected or already
+            # consumed release available to later RSS/search requests.
+            self.catalog.discard(entry.guid)
         LOGGER.info(
             "Requested verified PTP replacement via Radarr: old_hash=%s old_torrent_id=%s "
             "replacement_torrent_id=%s movie_id=%s",

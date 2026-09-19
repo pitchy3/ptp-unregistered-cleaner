@@ -337,3 +337,64 @@ def test_replacement_checkpoint_survives_offline_instance() -> None:
     requests = {"old-hash": "30"}
     app._prune_replacement_requests(requests, Counter(), False)
     assert requests == {"old-hash": "30"}
+
+
+def test_failed_checkpoint_write_preserves_replaced_torrent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    deleted: list[str] = []
+
+    class Ptp:
+        def fetch_unregistered(self):
+            return {
+                "old-hash": UnregisteredTorrent(
+                    "old-hash", torrent_id="10", group_id="20", reason="30"
+                )
+            }
+
+    class Qbit:
+        def __init__(self, _config):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def list_torrents(self):
+            return [Torrent("old-hash", "Old.Release", "radarr")]
+
+        def get_trackers(self, _torrent_hash):
+            return [Tracker("https://passthepopcorn.me/announce")]
+
+        def delete_torrent(self, torrent_hash):
+            deleted.append(torrent_hash)
+
+    class Coordinator:
+        def replace(self, _match):
+            return "30"
+
+    route = RadarrConfig(
+        name="movies",
+        url="http://radarr",
+        api_key="key",
+        qbittorrent_instances=["main"],
+        qbittorrent_categories=["radarr"],
+        torznab_external_url="http://cleaner:9697",
+        torznab_api_key="proxy-key",
+    )
+    config = Config(
+        app=AppConfig(dry_run=False, state_path=str(tmp_path / "state.json")),
+        ptp=PtpConfig(),
+        matching=MatchingConfig(),
+        qbittorrent=[QBittorrentConfig("main", "http://main", "user", "pass")],
+        credentials=Credentials("api-user", "api-key"),
+        radarr=[route],
+    )
+    monkeypatch.setattr(app, "QBittorrentClient", Qbit)
+    monkeypatch.setattr(app, "save_state", lambda *_args, **_kwargs: False)
+
+    app.run_once(config, ptp_client=Ptp(), coordinators={"movies": Coordinator()})
+
+    assert deleted == []

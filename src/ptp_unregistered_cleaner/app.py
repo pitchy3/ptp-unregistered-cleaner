@@ -102,10 +102,18 @@ def run_once(
                     # Checkpoint successful grabs before qBittorrent removal. If removal
                     # fails, the next run can retry cleanup without downloading twice.
                     if replacement_requests != requests_before:
-                        save_state(
+                        checkpoint_saved = save_state(
                             cfg.app.state_path,
                             State(replacement_requests=replacement_requests),
                         )
+                        if not checkpoint_saved:
+                            matches = _preserve_uncheckpointed_replacements(
+                                matches,
+                                cfg.radarr,
+                                requests_before,
+                                replacement_requests,
+                                skipped,
+                            )
                     remove_matches(
                         client,
                         matches,
@@ -164,6 +172,37 @@ def _prune_replacement_requests(
     for torrent_hash in list(replacement_requests):
         if remaining_torrent_copies[torrent_hash] <= 0:
             replacement_requests.pop(torrent_hash, None)
+
+
+def _preserve_uncheckpointed_replacements(
+    matches: list[Match],
+    radarr_configs: list[RadarrConfig],
+    requests_before: dict[str, str],
+    replacement_requests: dict[str, str],
+    skipped: list[tuple[Match, str]],
+) -> list[Match]:
+    """Prevent cleanup when a newly requested replacement was not checkpointed."""
+    new_checkpoints = {
+        key
+        for key, replacement_id in replacement_requests.items()
+        if requests_before.get(key) != replacement_id
+    }
+    removable: list[Match] = []
+    for match in matches:
+        route = radarr_route(
+            radarr_configs, match.instance_name, match.torrent.category
+        )
+        checkpoint = _checkpoint_key(route, match.torrent.hash) if route else None
+        if checkpoint in new_checkpoints:
+            reason = (
+                "replacement requested but checkpoint could not be saved; "
+                "preserved to prevent unsafe cleanup"
+            )
+            LOGGER.error("Preserving %s: %s", checkpoint, reason)
+            skipped.append((match, reason))
+            continue
+        removable.append(match)
+    return removable
 
 
 def _request_replacements(

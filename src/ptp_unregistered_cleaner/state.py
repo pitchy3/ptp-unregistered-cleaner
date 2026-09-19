@@ -65,7 +65,8 @@ def load_state(path: str | Path) -> State:
     return State.from_dict(data)
 
 
-def save_state(path: str | Path, state: State) -> None:
+def save_state(path: str | Path, state: State) -> bool:
+    """Persist state and report whether the write completed successfully."""
     state_path = Path(path)
     try:
         state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +75,8 @@ def save_state(path: str | Path, state: State) -> None:
         )
     except OSError as exc:
         LOGGER.error("Unable to write state file %s: %s", state_path, exc)
+        return False
+    return True
 
 
 def successful_state(

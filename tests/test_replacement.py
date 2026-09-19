@@ -162,5 +162,34 @@ def test_coordinator_verifies_and_grabs_exact_release() -> None:
         Torrent("hash", "old"),
         UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
     )
-    result = ReplacementCoordinator(Ptp(), Radarr(), ReplacementCatalog()).replace(match)
+    catalog = ReplacementCatalog()
+    result = ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match)
     assert result == "34"
+    assert catalog.entries() == []
+
+
+def test_coordinator_removes_release_from_catalog_when_radarr_rejects() -> None:
+    replacement = ReplacementTorrent(
+        "34", "56", "Movie-GROUP", 1234, "tt1", seeders=1, peers=1
+    )
+
+    class Ptp:
+        def fetch_replacement(self, _group_id, _torrent_id):
+            return replacement
+
+    class Radarr:
+        def find_movie(self, _imdb_id, _tmdb_id):
+            return {"id": 7, "hasFile": True, "movieFileId": 8}
+
+        def find_release(self, _movie_id, _guid):
+            raise RadarrClientError("mapped to the wrong movie")
+
+    match = Match(
+        "main",
+        Torrent("hash", "old"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
+    )
+    catalog = ReplacementCatalog()
+    with pytest.raises(RadarrClientError, match="wrong movie"):
+        ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match)
+    assert catalog.entries() == []

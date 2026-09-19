@@ -40,6 +40,11 @@ class ReplacementCatalog:
         with self._lock:
             return self._entries.get(guid)
 
+    def discard(self, guid: str) -> None:
+        """Stop exposing a replacement after its explicit Radarr grab attempt."""
+        with self._lock:
+            self._entries.pop(guid, None)
+
     def entries(self) -> list[PublishedReplacement]:
         with self._lock:
             return list(self._entries.values())
