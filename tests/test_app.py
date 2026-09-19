@@ -465,3 +465,56 @@ def test_failed_checkpoint_write_preserves_later_instance_copy(
 
     assert replacement_calls == ["first"]
     assert deleted == []
+
+
+def test_each_replacement_is_checkpointed_before_processing_the_next(
+    tmp_path: Path, monkeypatch
+) -> None:
+    saved_requests: list[dict[str, str]] = []
+
+    class Coordinator:
+        def replace(self, match):
+            if match.torrent.hash == "second-hash":
+                assert saved_requests == [{"movies|first-hash": "30"}]
+
+    def record_state(_path, state):
+        saved_requests.append(dict(state.replacement_requests))
+        return True
+
+    matches = [
+        app.Match(
+            "main",
+            Torrent("first-hash", "First.Release"),
+            UnregisteredTorrent(
+                "first-hash", torrent_id="10", group_id="20", reason="30"
+            ),
+        ),
+        app.Match(
+            "main",
+            Torrent("second-hash", "Second.Release"),
+            UnregisteredTorrent(
+                "second-hash", torrent_id="11", group_id="21", reason="31"
+            ),
+        ),
+    ]
+    monkeypatch.setattr(app, "save_state", record_state)
+
+    removable = app._request_replacements(
+        matches,
+        [_radarr_route()],
+        {"movies": Coordinator()},
+        _TrackerClient(),
+        "passthepopcorn",
+        False,
+        25,
+        {},
+        [],
+        set(),
+        tmp_path / "state.json",
+    )
+
+    assert removable == matches
+    assert saved_requests == [
+        {"movies|first-hash": "30"},
+        {"movies|first-hash": "30", "movies|second-hash": "31"},
+    ]

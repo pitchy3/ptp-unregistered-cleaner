@@ -88,7 +88,6 @@ def run_once(
                         skipped_state.append(
                             {"instance": instance.name, "hash": torrent.hash, "reason": reason}
                         )
-                    requests_before = dict(replacement_requests)
                     matches = _request_replacements(
                         matches,
                         cfg.radarr,
@@ -100,31 +99,8 @@ def run_once(
                         replacement_requests,
                         skipped,
                         unpersisted_checkpoints,
+                        cfg.app.state_path,
                     )
-                    # Checkpoint successful grabs before qBittorrent removal. If removal
-                    # fails, the next run can retry cleanup without downloading twice.
-                    if replacement_requests != requests_before:
-                        checkpoint_saved = save_state(
-                            cfg.app.state_path,
-                            State(replacement_requests=replacement_requests),
-                        )
-                        if checkpoint_saved:
-                            # save_state writes the complete replacement map, so any
-                            # checkpoint that failed earlier is now durable too.
-                            unpersisted_checkpoints.clear()
-                        else:
-                            newly_unpersisted = {
-                                key
-                                for key, replacement_id in replacement_requests.items()
-                                if requests_before.get(key) != replacement_id
-                            }
-                            unpersisted_checkpoints.update(newly_unpersisted)
-                            matches = _preserve_uncheckpointed_replacements(
-                                matches,
-                                cfg.radarr,
-                                unpersisted_checkpoints,
-                                skipped,
-                            )
                     remove_matches(
                         client,
                         matches,
@@ -185,31 +161,6 @@ def _prune_replacement_requests(
             replacement_requests.pop(torrent_hash, None)
 
 
-def _preserve_uncheckpointed_replacements(
-    matches: list[Match],
-    radarr_configs: list[RadarrConfig],
-    unpersisted_checkpoints: set[str],
-    skipped: list[tuple[Match, str]],
-) -> list[Match]:
-    """Prevent cleanup when a newly requested replacement was not checkpointed."""
-    removable: list[Match] = []
-    for match in matches:
-        route = radarr_route(
-            radarr_configs, match.instance_name, match.torrent.category
-        )
-        checkpoint = _checkpoint_key(route, match.torrent.hash) if route else None
-        if checkpoint in unpersisted_checkpoints:
-            reason = (
-                "replacement requested but checkpoint could not be saved; "
-                "preserved to prevent unsafe cleanup"
-            )
-            LOGGER.error("Preserving %s: %s", checkpoint, reason)
-            skipped.append((match, reason))
-            continue
-        removable.append(match)
-    return removable
-
-
 def _request_replacements(
     matches: list[Match],
     radarr_configs: list[RadarrConfig],
@@ -221,6 +172,7 @@ def _request_replacements(
     replacement_requests: dict[str, str],
     skipped: list[tuple[Match, str]],
     unpersisted_checkpoints: set[str] | None = None,
+    checkpoint_state_path: str | Path | None = None,
 ) -> list[Match]:
     removable: list[Match] = []
     live_processed = 0
@@ -296,6 +248,26 @@ def _request_replacements(
         try:
             coordinator.replace(match)
             replacement_requests[checkpoint] = replacement_id
+            if checkpoint_state_path is not None:
+                checkpoint_saved = save_state(
+                    checkpoint_state_path,
+                    State(replacement_requests=replacement_requests),
+                )
+                if checkpoint_saved:
+                    # The complete map was persisted, including any checkpoint that
+                    # failed earlier in this run.
+                    if unpersisted_checkpoints is not None:
+                        unpersisted_checkpoints.clear()
+                else:
+                    if unpersisted_checkpoints is not None:
+                        unpersisted_checkpoints.add(checkpoint)
+                    reason = (
+                        "replacement requested but checkpoint could not be saved; "
+                        "preserved to prevent unsafe cleanup"
+                    )
+                    LOGGER.error("Preserving %s: %s", checkpoint, reason)
+                    skipped.append((match, reason))
+                    continue
         except Exception as exc:
             LOGGER.exception(
                 "Unable to request replacement %s for %s", replacement_id, match.torrent.hash
