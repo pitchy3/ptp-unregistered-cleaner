@@ -41,6 +41,8 @@ class RadarrClient:
             raise RadarrClientError("Radarr returned invalid JSON") from exc
 
     def find_movie(self, imdb_id: str | None, tmdb_id: str | None) -> dict[str, Any]:
+        if not imdb_id and not tmdb_id:
+            raise RadarrClientError("At least one movie identifier is required")
         movies = self._request("GET", "/movie")
         if not isinstance(movies, list):
             raise RadarrClientError("Radarr movie response was not a list")
@@ -48,10 +50,8 @@ class RadarrClient:
             movie
             for movie in movies
             if isinstance(movie, dict)
-            and (
-                (imdb_id and str(movie.get("imdbId", "")) == imdb_id)
-                or (tmdb_id and str(movie.get("tmdbId", "")) == tmdb_id)
-            )
+            and (not imdb_id or str(movie.get("imdbId", "")) == imdb_id)
+            and (not tmdb_id or str(movie.get("tmdbId", "")) == tmdb_id)
         ]
         if len(matches) != 1:
             raise RadarrClientError(

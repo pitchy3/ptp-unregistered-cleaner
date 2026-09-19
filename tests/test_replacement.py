@@ -135,6 +135,23 @@ def test_radarr_grab_only_bypasses_known_upgrade_policy(monkeypatch) -> None:
         client.grab(release, 7)
 
 
+def test_radarr_movie_requires_all_supplied_ids_to_match(monkeypatch) -> None:
+    client = object.__new__(RadarrClient)
+    movies = [
+        {"id": 7, "imdbId": "tt1", "tmdbId": 99},
+        {"id": 8, "imdbId": "tt2", "tmdbId": 100},
+    ]
+    monkeypatch.setattr(client, "_request", lambda *_args, **_kwargs: movies)
+
+    assert client.find_movie("tt1", "99")["id"] == 7
+    assert client.find_movie("tt1", None)["id"] == 7
+    assert client.find_movie(None, "100")["id"] == 8
+    with pytest.raises(RadarrClientError, match="found 0"):
+        client.find_movie("tt1", "100")
+    with pytest.raises(RadarrClientError, match="identifier is required"):
+        client.find_movie(None, None)
+
+
 def test_coordinator_verifies_and_grabs_exact_release() -> None:
     replacement = ReplacementTorrent(
         "34", "56", "Movie-GROUP", 1234, "tt1", seeders=1, peers=1
