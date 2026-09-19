@@ -7,6 +7,7 @@ import os
 import time
 from collections import Counter
 from contextlib import ExitStack
+from dataclasses import replace as dataclass_replace
 from pathlib import Path
 
 from .config import (
@@ -112,6 +113,7 @@ def run_once(
                         cfg.app.state_path,
                         volatile_requests,
                         volatile_replacement_requests is None,
+                        previous_state,
                     )
                     remove_matches(
                         client,
@@ -197,6 +199,7 @@ def _request_replacements(
     checkpoint_state_path: str | Path | None = None,
     volatile_replacement_requests: dict[str, str] | None = None,
     retry_checkpoint_writes: bool = False,
+    checkpoint_base_state: State | None = None,
 ) -> list[Match]:
     removable: list[Match] = []
     live_processed = 0
@@ -281,7 +284,10 @@ def _request_replacements(
             if checkpoint_state_path is not None:
                 checkpoint_saved = save_state(
                     checkpoint_state_path,
-                    State(replacement_requests=replacement_requests),
+                    dataclass_replace(
+                        checkpoint_base_state or State(),
+                        replacement_requests=dict(replacement_requests),
+                    ),
                 )
                 while not checkpoint_saved and retry_checkpoint_writes:
                     LOGGER.error(
@@ -292,7 +298,10 @@ def _request_replacements(
                     time.sleep(CHECKPOINT_RETRY_SECONDS)
                     checkpoint_saved = save_state(
                         checkpoint_state_path,
-                        State(replacement_requests=replacement_requests),
+                        dataclass_replace(
+                            checkpoint_base_state or State(),
+                            replacement_requests=dict(replacement_requests),
+                        ),
                     )
                 if checkpoint_saved:
                     # The complete map was persisted, including any checkpoint that

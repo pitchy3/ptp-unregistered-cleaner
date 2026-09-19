@@ -18,6 +18,17 @@ class StateError(RuntimeError):
     """Raised when existing safety state cannot be loaded reliably."""
 
 
+def _fsync_directory(path: Path) -> None:
+    """Make an atomic directory-entry replacement durable on POSIX."""
+    if os.name != "posix":  # pragma: no cover - production image is Linux
+        return
+    directory_fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 @dataclass
 class State:
     last_successful_run_at: str | None = None
@@ -96,6 +107,7 @@ def save_state(path: str | Path, state: State) -> bool:
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
         os.replace(temporary_path, state_path)
+        _fsync_directory(state_path.parent)
     except OSError as exc:
         LOGGER.error("Unable to write state file %s: %s", state_path, exc)
         if temporary_path is not None:

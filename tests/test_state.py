@@ -78,3 +78,16 @@ def test_malformed_replacement_checkpoint_map_fails_closed(
     )
     with pytest.raises(StateError, match="replacement_requests must be a JSON object"):
         load_state(path)
+
+
+def test_state_write_fsyncs_containing_directory(tmp_path: Path, monkeypatch) -> None:
+    synced_directories: list[Path] = []
+    monkeypatch.setattr(
+        state_module,
+        "_fsync_directory",
+        lambda path: synced_directories.append(path),
+    )
+
+    path = tmp_path / "state.json"
+    assert save_state(path, State()) is True
+    assert synced_directories == [tmp_path]

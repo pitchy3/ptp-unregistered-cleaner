@@ -635,3 +635,59 @@ def test_one_shot_retries_checkpoint_until_it_is_durable(
 
     assert removable == [match]
     assert sleeps == [60, 60]
+
+
+def test_intermediate_checkpoint_preserves_previous_run_summary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    saved_states = []
+    previous = app.State(
+        last_successful_run_at="2026-09-18T12:00:00+00:00",
+        last_seen_infohashes_count=7,
+        removed_hashes_by_instance={"main": ["prior-hash"]},
+        skipped_hashes=[{"hash": "skipped-hash", "reason": "cap"}],
+    )
+    match = app.Match(
+        "main",
+        Torrent("old-hash", "Old.Release"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="30"
+        ),
+    )
+
+    class Coordinator:
+        def replace(self, _match):
+            return "30"
+
+    def record_state(_path, state):
+        saved_states.append(state)
+        return True
+
+    monkeypatch.setattr(app, "save_state", record_state)
+
+    app._request_replacements(
+        [match],
+        [_radarr_route()],
+        {"movies": Coordinator()},
+        _TrackerClient(),
+        "passthepopcorn",
+        False,
+        25,
+        {},
+        [],
+        set(),
+        tmp_path / "state.json",
+        {},
+        False,
+        previous,
+    )
+
+    assert saved_states == [
+        app.State(
+            last_successful_run_at="2026-09-18T12:00:00+00:00",
+            last_seen_infohashes_count=7,
+            removed_hashes_by_instance={"main": ["prior-hash"]},
+            skipped_hashes=[{"hash": "skipped-hash", "reason": "cap"}],
+            replacement_requests={"movies|old-hash": "30"},
+        )
+    ]
