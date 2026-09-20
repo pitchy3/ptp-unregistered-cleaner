@@ -194,13 +194,25 @@ def test_coordinator_verifies_and_grabs_exact_release() -> None:
             assert (group_id, torrent_id) == ("56", "34")
             return replacement
 
+    catalog = ReplacementCatalog()
+
     class Radarr:
         def find_movie(self, imdb_id, tmdb_id):
             assert (imdb_id, tmdb_id) == ("tt1", None)
-            return {"id": 7, "hasFile": True, "movieFileId": 8}
+            return {
+                "id": 7,
+                "hasFile": True,
+                "movieFileId": 8,
+                "imdbId": "tt1",
+                "tmdbId": 99,
+            }
 
         def find_release(self, movie_id, guid):
             assert (movie_id, guid) == (7, "ptp-replacement-34")
+            published = catalog.get(guid)
+            assert published is not None
+            assert published.replacement.imdb_id == "tt1"
+            assert published.replacement.tmdb_id == "99"
             return {"guid": guid}
 
         def grab(self, release, movie_id):
@@ -211,9 +223,48 @@ def test_coordinator_verifies_and_grabs_exact_release() -> None:
         Torrent("hash", "old"),
         UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
     )
-    catalog = ReplacementCatalog()
     result = ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match)
     assert result == "34"
+    assert catalog.entries() == []
+
+
+def test_coordinator_adds_missing_imdb_id_from_matched_radarr_movie() -> None:
+    replacement = ReplacementTorrent(
+        "34", "56", "Movie-GROUP", 1234, tmdb_id="99", seeders=1, peers=1
+    )
+    catalog = ReplacementCatalog()
+
+    class Ptp:
+        def fetch_replacement(self, _group_id, _torrent_id):
+            return replacement
+
+    class Radarr:
+        def find_movie(self, imdb_id, tmdb_id):
+            assert (imdb_id, tmdb_id) == (None, "99")
+            return {
+                "id": 7,
+                "hasFile": True,
+                "movieFileId": 8,
+                "imdbId": "tt1",
+                "tmdbId": 99,
+            }
+
+        def find_release(self, _movie_id, guid):
+            published = catalog.get(guid)
+            assert published is not None
+            assert published.replacement.imdb_id == "tt1"
+            assert published.replacement.tmdb_id == "99"
+            return {"guid": guid}
+
+        def grab(self, _release, _movie_id):
+            pass
+
+    match = Match(
+        "main",
+        Torrent("hash", "old"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
+    )
+    assert ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match) == "34"
     assert catalog.entries() == []
 
 

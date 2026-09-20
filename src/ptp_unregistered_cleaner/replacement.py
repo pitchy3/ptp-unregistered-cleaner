@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace as dataclass_replace
 
 from .matcher import Match
 from .ptp_client import PtpClient
@@ -39,6 +40,11 @@ class ReplacementCoordinator:
                 "Mapped Radarr movie has no existing file to replace"
             )
         movie_id = int(movie["id"])
+        replacement = dataclass_replace(
+            replacement,
+            imdb_id=replacement.imdb_id or _optional_string(movie.get("imdbId")),
+            tmdb_id=replacement.tmdb_id or _optional_string(movie.get("tmdbId")),
+        )
         entry = self.catalog.publish(replacement)
         try:
             release = self.radarr.find_release(movie_id, entry.guid)
@@ -57,3 +63,8 @@ class ReplacementCoordinator:
             movie_id,
         )
         return replacement_id
+
+
+def _optional_string(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
