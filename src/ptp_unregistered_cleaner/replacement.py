@@ -48,9 +48,7 @@ class ReplacementCoordinator:
         entry = self.catalog.publish(replacement)
         try:
             release = self.radarr.find_release(movie_id, entry.guid)
-            if self.radarr.replacement_was_grabbed(
-                movie_id, entry.guid, replacement.title
-            ):
+            if self.radarr.replacement_was_grabbed(movie_id, entry.guid):
                 LOGGER.info(
                     "Reconciled previously grabbed PTP replacement: "
                     "replacement_torrent_id=%s movie_id=%s",
@@ -64,9 +62,7 @@ class ReplacementCoordinator:
                     # The POST may have succeeded even when its response was lost.
                     # Reconcile once now; every later retry also performs the same
                     # preflight check before it can submit another POST.
-                    if not self.radarr.replacement_was_grabbed(
-                        movie_id, entry.guid, replacement.title
-                    ):
+                    if not self.radarr.replacement_was_grabbed(movie_id, entry.guid):
                         raise
         finally:
             # The catalog exists only to let Radarr discover and fetch this exact

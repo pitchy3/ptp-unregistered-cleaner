@@ -94,9 +94,7 @@ class RadarrClient:
             json={"guid": release["guid"], "indexerId": release["indexerId"]},
         )
 
-    def replacement_was_grabbed(
-        self, movie_id: int, guid: str, title: str
-    ) -> bool:
+    def replacement_was_grabbed(self, movie_id: int, guid: str) -> bool:
         """Reconcile an uncertain grab against Radarr's queue and history."""
         queue = self._request(
             "GET",
@@ -104,7 +102,7 @@ class RadarrClient:
             params={"movieIds": movie_id, "page": 1, "pageSize": 100},
         )
         for record in _records(queue, "queue"):
-            if _same_movie(record, movie_id) and _same_release(record, guid, title):
+            if _same_movie(record, movie_id) and _same_release(record, guid):
                 return True
 
         history = self._request(
@@ -121,7 +119,7 @@ class RadarrClient:
         return any(
             _same_movie(record, movie_id)
             and str(record.get("eventType", "")).casefold() == "grabbed"
-            and _same_release(record, guid, title)
+            and _same_release(record, guid)
             for record in _records(history, "history")
         )
 
@@ -149,10 +147,7 @@ def _same_movie(record: dict[str, Any], movie_id: int) -> bool:
     return int(record.get("movieId") or 0) == movie_id
 
 
-def _same_release(record: dict[str, Any], guid: str, title: str) -> bool:
+def _same_release(record: dict[str, Any], guid: str) -> bool:
     data = record.get("data") if isinstance(record.get("data"), dict) else {}
     record_guid = str(data.get("guid") or record.get("guid") or "")
-    if record_guid:
-        return record_guid == guid
-    record_title = str(record.get("title") or record.get("sourceTitle") or "")
-    return record_title == title
+    return record_guid == guid

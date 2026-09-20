@@ -189,11 +189,19 @@ def test_radarr_reconciles_exact_release_from_queue_or_history(monkeypatch) -> N
 
     def queued(_method, path, **_kwargs):
         if path == "/queue":
-            return {"records": [{"movieId": 7, "title": "Movie-GROUP"}]}
+            return {
+                "records": [
+                    {
+                        "movieId": 7,
+                        "title": "Movie-GROUP",
+                        "guid": "ptp-replacement-34",
+                    }
+                ]
+            }
         return {"records": []}
 
     monkeypatch.setattr(client, "_request", queued)
-    assert client.replacement_was_grabbed(7, "ptp-replacement-34", "Movie-GROUP")
+    assert client.replacement_was_grabbed(7, "ptp-replacement-34")
 
     def historical(_method, path, **_kwargs):
         if path == "/queue":
@@ -210,12 +218,30 @@ def test_radarr_reconciles_exact_release_from_queue_or_history(monkeypatch) -> N
         }
 
     monkeypatch.setattr(client, "_request", historical)
-    assert client.replacement_was_grabbed(7, "ptp-replacement-34", "Movie-GROUP")
+    assert client.replacement_was_grabbed(7, "ptp-replacement-34")
 
     monkeypatch.setattr(client, "_request", lambda *_args, **_kwargs: {"records": []})
-    assert not client.replacement_was_grabbed(
-        7, "ptp-replacement-34", "Movie-GROUP"
+    assert not client.replacement_was_grabbed(7, "ptp-replacement-34")
+
+
+def test_radarr_reconciliation_does_not_fall_back_to_title(monkeypatch) -> None:
+    client = object.__new__(RadarrClient)
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "records": [
+                {
+                    "movieId": 7,
+                    "eventType": "grabbed",
+                    "title": "Movie-GROUP",
+                    "sourceTitle": "Movie-GROUP",
+                    "data": {},
+                }
+            ]
+        },
     )
+    assert not client.replacement_was_grabbed(7, "ptp-replacement-34")
 
 
 def test_coordinator_verifies_and_grabs_exact_release() -> None:
@@ -255,7 +281,7 @@ def test_coordinator_verifies_and_grabs_exact_release() -> None:
         def grab(self, release, movie_id):
             assert (release, movie_id) == ({"guid": "ptp-replacement-34"}, 7)
 
-        def replacement_was_grabbed(self, _movie_id, _guid, _title):
+        def replacement_was_grabbed(self, _movie_id, _guid):
             self.reconciliations += 1
             return False
 
@@ -300,7 +326,7 @@ def test_coordinator_adds_missing_imdb_id_from_matched_radarr_movie() -> None:
         def grab(self, _release, _movie_id):
             pass
 
-        def replacement_was_grabbed(self, _movie_id, _guid, _title):
+        def replacement_was_grabbed(self, _movie_id, _guid):
             return False
 
     match = Match(
@@ -332,7 +358,7 @@ def test_coordinator_reconciles_ambiguous_grab_failure() -> None:
         def find_release(self, _movie_id, guid):
             return {"guid": guid}
 
-        def replacement_was_grabbed(self, _movie_id, _guid, _title):
+        def replacement_was_grabbed(self, _movie_id, _guid):
             return next(self.reconciliations)
 
         def grab(self, _release, _movie_id):
@@ -364,7 +390,7 @@ def test_coordinator_does_not_repeat_already_reconciled_grab() -> None:
         def find_release(self, _movie_id, guid):
             return {"guid": guid}
 
-        def replacement_was_grabbed(self, _movie_id, _guid, _title):
+        def replacement_was_grabbed(self, _movie_id, _guid):
             return True
 
         def grab(self, _release, _movie_id):
