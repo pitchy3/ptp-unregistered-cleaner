@@ -30,7 +30,7 @@ def test_daemon_retries_after_failed_startup_run(monkeypatch, caplog) -> None:
 
     cleanup_calls = 0
 
-    def failed_cleanup(_config: Config) -> None:
+    def failed_cleanup(_config: Config, **_kwargs) -> None:
         nonlocal cleanup_calls
         cleanup_calls += 1
         raise RuntimeError("temporary failure")
@@ -51,7 +51,7 @@ def test_daemon_retries_after_failed_startup_run(monkeypatch, caplog) -> None:
 
 
 def test_daemon_still_exits_for_startup_config_error(monkeypatch) -> None:
-    def invalid_cleanup(_config: Config) -> None:
+    def invalid_cleanup(_config: Config, **_kwargs) -> None:
         raise ConfigError("invalid")
 
     monkeypatch.delenv("RUN_ONCE", raising=False)

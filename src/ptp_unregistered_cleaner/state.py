@@ -1,9 +1,11 @@
-"""Best-effort JSON state persistence."""
+"""Crash-safe JSON state persistence."""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,15 +14,39 @@ from typing import Any
 LOGGER = logging.getLogger(__name__)
 
 
+class StateError(RuntimeError):
+    """Raised when existing safety state cannot be loaded reliably."""
+
+
+def _fsync_directory(path: Path) -> None:
+    """Make an atomic directory-entry replacement durable on POSIX."""
+    if os.name != "posix":  # pragma: no cover - production image is Linux
+        return
+    directory_fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 @dataclass
 class State:
     last_successful_run_at: str | None = None
     last_seen_infohashes_count: int = 0
     removed_hashes_by_instance: dict[str, list[str]] = field(default_factory=dict)
     skipped_hashes: list[dict[str, str]] = field(default_factory=list)
+    replacement_requests: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> State:
+        raw_replacement_requests = data.get("replacement_requests", {})
+        if not isinstance(raw_replacement_requests, dict):
+            raise StateError("State replacement_requests must be a JSON object")
+        if not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in raw_replacement_requests.items()
+        ):
+            raise StateError("State replacement_requests keys and values must be strings")
         return cls(
             last_successful_run_at=data.get("last_successful_run_at"),
             last_seen_infohashes_count=int(data.get("last_seen_infohashes_count", 0)),
@@ -34,6 +60,9 @@ class State:
                 for item in (data.get("skipped_hashes", []) or [])
                 if isinstance(item, dict)
             ],
+            replacement_requests={
+                key: value for key, value in raw_replacement_requests.items()
+            },
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +71,7 @@ class State:
             "last_seen_infohashes_count": self.last_seen_infohashes_count,
             "removed_hashes_by_instance": self.removed_hashes_by_instance,
             "skipped_hashes": self.skipped_hashes,
+            "replacement_requests": self.replacement_requests,
         }
 
 
@@ -52,22 +82,41 @@ def load_state(path: str | Path) -> State:
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        LOGGER.warning("Unable to read state file %s: %s", state_path, exc)
-        return State()
+        raise StateError(f"Unable to read state file {state_path}: {exc}") from exc
     if not isinstance(data, dict):
-        return State()
+        raise StateError(f"State file {state_path} must contain a JSON object")
     return State.from_dict(data)
 
 
-def save_state(path: str | Path, state: State) -> None:
+def save_state(path: str | Path, state: State) -> bool:
+    """Persist state and report whether the write completed successfully."""
     state_path = Path(path)
+    temporary_path: Path | None = None
     try:
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(
-            json.dumps(state.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
-        )
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=state_path.parent,
+            prefix=f".{state_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            json.dump(state.to_dict(), temporary_file, indent=2, sort_keys=True)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, state_path)
+        _fsync_directory(state_path.parent)
     except OSError as exc:
         LOGGER.error("Unable to write state file %s: %s", state_path, exc)
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                LOGGER.warning("Unable to remove temporary state file %s", temporary_path)
+        return False
+    return True
 
 
 def successful_state(
@@ -75,10 +124,12 @@ def successful_state(
     infohash_count: int,
     removed_hashes_by_instance: dict[str, list[str]],
     skipped_hashes: list[dict[str, str]],
+    replacement_requests: dict[str, str] | None = None,
 ) -> State:
     return State(
         last_successful_run_at=datetime.now(UTC).isoformat(),
         last_seen_infohashes_count=infohash_count,
         removed_hashes_by_instance=removed_hashes_by_instance,
         skipped_hashes=skipped_hashes,
+        replacement_requests=replacement_requests or {},
     )

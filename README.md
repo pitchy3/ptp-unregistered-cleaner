@@ -12,11 +12,14 @@
 - Checks all configured qBittorrent instances for matching torrent hashes.
 - Optionally verifies that each matching torrent has a tracker URL containing a configured substring, which defaults to `passthepopcorn`.
 - Removes matching qBittorrent torrent entries with `deleteFiles=false`.
-- Maintains a best-effort JSON state file with the most recent run summary.
+- Can optionally ask Radarr to download PTP's designated replacement first, then let
+  Radarr perform its normal import, hardlink, and library-file replacement workflow.
+- Maintains a crash-safe JSON state file with the most recent run summary and replacement checkpoints.
 
 ## What this does NOT do
 
-- Does not download torrents.
+- Does not download movie data itself. Optional replacement mode proxies the authenticated
+  `.torrent` file to Radarr; Radarr and its configured download client own the download.
 - Does not delete movie files or downloaded data.
 - Does not scrape torrent pages.
 - Does not rapidly poll PTP; it is designed for low-frequency use every few days.
@@ -30,6 +33,8 @@
 - Keep `ApiUser` and `ApiKey` private.
 - Review logs before posting them publicly. The application avoids logging configured secrets, but torrent names, hashes, and PTP metadata may still be sensitive.
 - Keep `max_deletes_per_run` set to a conservative value. Live mode will not delete beyond this cap in one run.
+- Keep the replacement Torznab endpoint on your trusted LAN/Docker network. It is protected
+  by a separate API key but should not be exposed to the Internet.
 
 ## Quick start
 
@@ -81,7 +86,7 @@ Configuration is loaded from `PTP_CONFIG_PATH`, defaulting to `/config/config.ya
 | `run_on_startup` | `true` | Run immediately when daemon mode starts. |
 | `dry_run` | `true` | If true, log what would be removed but do not call qBittorrent delete. |
 | `max_deletes_per_run` | `25` | Safety cap for live removals per qBittorrent instance run path. |
-| `state_path` | `/data/state.json` | Best-effort JSON state file path. |
+| `state_path` | `/data/state.json` | Crash-safe JSON state path; an unreadable existing file stops cleanup. |
 
 ### `ptp`
 
@@ -117,6 +122,85 @@ qbittorrent:
 
 The loader supports simple `${VAR_NAME}` interpolation. If a referenced variable is missing, startup fails with an error naming that variable.
 
+### `radarr` (optional trump replacement)
+
+Replacement mode is disabled when `radarr` is an empty list. Each entry explicitly routes
+one or more qBittorrent instances—and optionally selected categories—to one Radarr. The
+cleaner never guesses from resolution or release name.
+
+```yaml
+radarr:
+  - name: movies-1080p
+    url: http://radarr-1080p:7878
+    api_key: ${RADARR_1080P_API_KEY}
+    qbittorrent_instances: [main]
+    qbittorrent_categories: [radarr]
+    torznab_port: 9697
+    torznab_external_url: http://ptp-unregistered-cleaner:9697
+    torznab_api_key: ${TORZNAB_1080P_API_KEY}
+
+  - name: movies-4k
+    url: http://radarr-4k:7878
+    api_key: ${RADARR_4K_API_KEY}
+    qbittorrent_instances: [seedbox]
+    qbittorrent_categories: []
+    torznab_port: 9698
+    torznab_external_url: http://ptp-unregistered-cleaner:9698
+    torznab_api_key: ${TORZNAB_4K_API_KEY}
+```
+
+An empty `qbittorrent_categories` list matches every category on the named instance. When
+categories are supplied, only those categories use that Radarr. Unmapped torrents continue
+through ordinary unregistered cleanup without automatic replacement. Startup rejects unknown
+qBittorrent names, duplicate Radarr names/listeners, and overlapping routes.
+
+For a routed torrent, a numeric PTP `Reason` value is treated as PTP's designated successor.
+Before any explicit Radarr grab, the cleaner:
+
+1. fetches the successor's metadata from PTP;
+2. verifies the successor belongs to the same PTP movie group;
+3. maps it to exactly one Radarr movie by IMDb/TMDb ID;
+4. publishes only that release through its authenticated local Torznab endpoint;
+5. asks Radarr to search/cache it and verifies the result maps back to that movie; and
+6. bypasses only Radarr's equal-preference/not-an-upgrade policy rejection.
+
+Unknown rejections—including blocklist, quality-profile, custom-format, disk-space, or
+wrong-movie failures—are never bypassed. With `preserve_on_failure: true` (recommended),
+the obsolete qBittorrent entry is retained so the next scheduled run can retry safely.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `name` | required | Unique route/target name. |
+| `url` | none | Radarr base URL reachable from the cleaner. |
+| `api_key` | none | API key for this Radarr. |
+| `qbittorrent_instances` | none | qBittorrent instance names routed to this Radarr. |
+| `qbittorrent_categories` | `[]` | Optional category allowlist; empty matches all. |
+| `timeout_seconds` | `30` | Radarr HTTP timeout. |
+| `torznab_host` | `0.0.0.0` | Local bind address. |
+| `torznab_port` | `9697 + entry index` | Unique local proxy port. |
+| `torznab_external_url` | none | Proxy origin reachable from Radarr, without `/api`. |
+| `torznab_api_key` | none | Separate random key for this target's proxy. |
+| `preserve_on_failure` | `true` | Keep the old qBittorrent entry when replacement fails. |
+
+Add a separate **Generic Torznab** indexer to each Radarr using its matching route:
+
+```text
+1080p Radarr URL:     http://CLEANER_HOST:9697/api
+1080p Radarr API key: TORZNAB_1080P_API_KEY
+
+4K Radarr URL:        http://CLEANER_HOST:9698/api
+4K Radarr API key:    TORZNAB_4K_API_KEY
+```
+
+Each endpoint has an isolated replacement catalog, so one Radarr cannot discover another
+target's candidates. Enable movie search on both indexers. The daemon keeps the endpoints
+available continuously. Publish every configured port or use the cleaner's service name when
+the containers share a Docker network.
+
+Start with `app.dry_run: true` and `radarr: []`. Confirm ordinary matching, then add and test
+the Radarr routes while still in dry-run. Only set `dry_run: false` after the logged route,
+candidate, and replacement IDs are correct.
+
 ## How matching works
 
 1. PTP `InfoHash` values are normalized to lowercase and deduplicated.
@@ -140,6 +224,11 @@ deleteFiles=false
 ```
 
 This removes the torrent entry from qBittorrent but does **not** delete downloaded files. This project never enables qBittorrent file deletion.
+
+When replacement mode is enabled and PTP supplies a successor torrent ID, the cleaner asks
+Radarr to grab the verified replacement before removing the old qBittorrent entry. Radarr
+then uses its normal Completed Download Handling. No synthetic `REPACK` title, custom-format
+score, or global Propers/Repacks setting is required.
 
 ## Running one-shot
 

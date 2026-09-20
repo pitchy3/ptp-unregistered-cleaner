@@ -18,6 +18,32 @@ matching:
   include_tags: []
   exclude_tags: []
 
+# Optional Radarr routes. An empty list disables automatic replacement.
+# Each route selects torrents by qBittorrent instance and, optionally, category.
+radarr: []
+# radarr:
+#   - name: movies-1080p
+#     url: http://radarr-1080p:7878
+#     api_key: ${RADARR_1080P_API_KEY}
+#     qbittorrent_instances: [main]
+#     qbittorrent_categories: [radarr]
+#     timeout_seconds: 30
+#     torznab_host: 0.0.0.0
+#     torznab_port: 9697
+#     torznab_external_url: http://ptp-unregistered-cleaner:9697
+#     torznab_api_key: ${TORZNAB_1080P_API_KEY}
+#     preserve_on_failure: true
+#   - name: movies-4k
+#     url: http://radarr-4k:7878
+#     api_key: ${RADARR_4K_API_KEY}
+#     qbittorrent_instances: [seedbox]
+#     # Omit/empty categories to route every category on this qBittorrent instance.
+#     qbittorrent_categories: []
+#     torznab_port: 9698
+#     torznab_external_url: http://ptp-unregistered-cleaner:9698
+#     torznab_api_key: ${TORZNAB_4K_API_KEY}
+#     preserve_on_failure: true
+
 qbittorrent:
   - name: main
     url: http://qbittorrent:8080
