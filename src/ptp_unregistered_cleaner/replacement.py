@@ -7,7 +7,7 @@ from dataclasses import replace as dataclass_replace
 
 from .matcher import Match
 from .ptp_client import PtpClient
-from .radarr_client import RadarrClient
+from .radarr_client import RadarrClient, RadarrClientError
 from .torznab import ReplacementCatalog
 
 LOGGER = logging.getLogger(__name__)
@@ -48,7 +48,26 @@ class ReplacementCoordinator:
         entry = self.catalog.publish(replacement)
         try:
             release = self.radarr.find_release(movie_id, entry.guid)
-            self.radarr.grab(release, movie_id)
+            if self.radarr.replacement_was_grabbed(
+                movie_id, entry.guid, replacement.title
+            ):
+                LOGGER.info(
+                    "Reconciled previously grabbed PTP replacement: "
+                    "replacement_torrent_id=%s movie_id=%s",
+                    replacement_id,
+                    movie_id,
+                )
+            else:
+                try:
+                    self.radarr.grab(release, movie_id)
+                except RadarrClientError:
+                    # The POST may have succeeded even when its response was lost.
+                    # Reconcile once now; every later retry also performs the same
+                    # preflight check before it can submit another POST.
+                    if not self.radarr.replacement_was_grabbed(
+                        movie_id, entry.guid, replacement.title
+                    ):
+                        raise
         finally:
             # The catalog exists only to let Radarr discover and fetch this exact
             # candidate during the explicit grab. Never leave a rejected or already

@@ -94,6 +94,37 @@ class RadarrClient:
             json={"guid": release["guid"], "indexerId": release["indexerId"]},
         )
 
+    def replacement_was_grabbed(
+        self, movie_id: int, guid: str, title: str
+    ) -> bool:
+        """Reconcile an uncertain grab against Radarr's queue and history."""
+        queue = self._request(
+            "GET",
+            "/queue",
+            params={"movieIds": movie_id, "page": 1, "pageSize": 100},
+        )
+        for record in _records(queue, "queue"):
+            if _same_movie(record, movie_id) and _same_release(record, guid, title):
+                return True
+
+        history = self._request(
+            "GET",
+            "/history",
+            params={
+                "movieId": movie_id,
+                "page": 1,
+                "pageSize": 100,
+                "sortKey": "date",
+                "sortDirection": "descending",
+            },
+        )
+        return any(
+            _same_movie(record, movie_id)
+            and str(record.get("eventType", "")).casefold() == "grabbed"
+            and _same_release(record, guid, title)
+            for record in _records(history, "history")
+        )
+
 
 def _safe_policy_rejection(reason: str) -> bool:
     normalized = reason.casefold()
@@ -106,3 +137,22 @@ def _safe_policy_rejection(reason: str) -> bool:
             "repack for a different release group",
         )
     )
+
+
+def _records(payload: Any, response_name: str) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("records"), list):
+        raise RadarrClientError(f"Radarr {response_name} response was malformed")
+    return [record for record in payload["records"] if isinstance(record, dict)]
+
+
+def _same_movie(record: dict[str, Any], movie_id: int) -> bool:
+    return int(record.get("movieId") or 0) == movie_id
+
+
+def _same_release(record: dict[str, Any], guid: str, title: str) -> bool:
+    data = record.get("data") if isinstance(record.get("data"), dict) else {}
+    record_guid = str(data.get("guid") or record.get("guid") or "")
+    if record_guid:
+        return record_guid == guid
+    record_title = str(record.get("title") or record.get("sourceTitle") or "")
+    return record_title == title

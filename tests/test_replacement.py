@@ -184,6 +184,40 @@ def test_radarr_movie_requires_all_supplied_ids_to_match(monkeypatch) -> None:
         client.find_movie(None, None)
 
 
+def test_radarr_reconciles_exact_release_from_queue_or_history(monkeypatch) -> None:
+    client = object.__new__(RadarrClient)
+
+    def queued(_method, path, **_kwargs):
+        if path == "/queue":
+            return {"records": [{"movieId": 7, "title": "Movie-GROUP"}]}
+        return {"records": []}
+
+    monkeypatch.setattr(client, "_request", queued)
+    assert client.replacement_was_grabbed(7, "ptp-replacement-34", "Movie-GROUP")
+
+    def historical(_method, path, **_kwargs):
+        if path == "/queue":
+            return {"records": []}
+        return {
+            "records": [
+                {
+                    "movieId": 7,
+                    "eventType": "grabbed",
+                    "sourceTitle": "Movie-GROUP",
+                    "data": {"guid": "ptp-replacement-34"},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(client, "_request", historical)
+    assert client.replacement_was_grabbed(7, "ptp-replacement-34", "Movie-GROUP")
+
+    monkeypatch.setattr(client, "_request", lambda *_args, **_kwargs: {"records": []})
+    assert not client.replacement_was_grabbed(
+        7, "ptp-replacement-34", "Movie-GROUP"
+    )
+
+
 def test_coordinator_verifies_and_grabs_exact_release() -> None:
     replacement = ReplacementTorrent(
         "34", "56", "Movie-GROUP", 1234, "tt1", seeders=1, peers=1
@@ -197,6 +231,9 @@ def test_coordinator_verifies_and_grabs_exact_release() -> None:
     catalog = ReplacementCatalog()
 
     class Radarr:
+        def __init__(self):
+            self.reconciliations = 0
+
         def find_movie(self, imdb_id, tmdb_id):
             assert (imdb_id, tmdb_id) == ("tt1", None)
             return {
@@ -217,6 +254,10 @@ def test_coordinator_verifies_and_grabs_exact_release() -> None:
 
         def grab(self, release, movie_id):
             assert (release, movie_id) == ({"guid": "ptp-replacement-34"}, 7)
+
+        def replacement_was_grabbed(self, _movie_id, _guid, _title):
+            self.reconciliations += 1
+            return False
 
     match = Match(
         "main",
@@ -258,6 +299,76 @@ def test_coordinator_adds_missing_imdb_id_from_matched_radarr_movie() -> None:
 
         def grab(self, _release, _movie_id):
             pass
+
+        def replacement_was_grabbed(self, _movie_id, _guid, _title):
+            return False
+
+    match = Match(
+        "main",
+        Torrent("hash", "old"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
+    )
+    assert ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match) == "34"
+    assert catalog.entries() == []
+
+
+def test_coordinator_reconciles_ambiguous_grab_failure() -> None:
+    replacement = ReplacementTorrent(
+        "34", "56", "Movie-GROUP", 1234, "tt1", seeders=1, peers=1
+    )
+    catalog = ReplacementCatalog()
+
+    class Ptp:
+        def fetch_replacement(self, _group_id, _torrent_id):
+            return replacement
+
+    class Radarr:
+        def __init__(self):
+            self.reconciliations = iter((False, True))
+
+        def find_movie(self, _imdb_id, _tmdb_id):
+            return {"id": 7, "hasFile": True, "movieFileId": 8, "imdbId": "tt1"}
+
+        def find_release(self, _movie_id, guid):
+            return {"guid": guid}
+
+        def replacement_was_grabbed(self, _movie_id, _guid, _title):
+            return next(self.reconciliations)
+
+        def grab(self, _release, _movie_id):
+            raise RadarrClientError("connection lost after POST")
+
+    match = Match(
+        "main",
+        Torrent("hash", "old"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
+    )
+    assert ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match) == "34"
+    assert catalog.entries() == []
+
+
+def test_coordinator_does_not_repeat_already_reconciled_grab() -> None:
+    replacement = ReplacementTorrent(
+        "34", "56", "Movie-GROUP", 1234, "tt1", seeders=1, peers=1
+    )
+    catalog = ReplacementCatalog()
+
+    class Ptp:
+        def fetch_replacement(self, _group_id, _torrent_id):
+            return replacement
+
+    class Radarr:
+        def find_movie(self, _imdb_id, _tmdb_id):
+            return {"id": 7, "hasFile": True, "movieFileId": 8, "imdbId": "tt1"}
+
+        def find_release(self, _movie_id, guid):
+            return {"guid": guid}
+
+        def replacement_was_grabbed(self, _movie_id, _guid, _title):
+            return True
+
+        def grab(self, _release, _movie_id):
+            raise AssertionError("an already reconciled release must not be grabbed again")
 
     match = Match(
         "main",
