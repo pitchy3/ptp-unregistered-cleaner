@@ -99,6 +99,31 @@ def build_feed(
     ).encode()
 
 
+def build_validation_feed(external_url: str) -> bytes:
+    """Return one intentionally invalid release for Radarr's connection test.
+
+    Radarr validates Torznab indexers with an identifier-less movie/RSS query and
+    rejects an otherwise valid empty feed. That request is indistinguishable from
+    an RSS poll, so the placeholder deliberately has an empty title and a
+    non-existent download URL: Radarr's connection test sees one parsed item,
+    while normal release filtering rejects it before it can become downloadable.
+    """
+    pub_date = datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S +0000")
+    placeholder_url = f"{external_url}/validation-placeholder"
+    escaped_url = html.escape(placeholder_url)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">'
+        "<channel><title>PTP Replacement Cleaner</title>"
+        "<item><title></title>"
+        '<guid isPermaLink="false">ptp-replacement-validation-placeholder</guid>'
+        f"<link>{escaped_url}</link><pubDate>{pub_date}</pubDate>"
+        f'<enclosure url="{escaped_url}" length="0" type="application/x-bittorrent" />'
+        '<torznab:attr name="category" value="2000" />'
+        "</item></channel></rss>"
+    ).encode()
+
+
 def matching_movie_entries(
     entries: list[PublishedReplacement], imdb_id: str, tmdb_id: str
 ) -> list[PublishedReplacement]:
@@ -174,17 +199,20 @@ class ReplacementServer:
                         self.send_body(200, CAPS_XML, "application/xml")
                     elif mode in {"search", "movie"}:
                         entries = []
+                        response_body = None
                         if mode == "movie":
-                            entries = matching_movie_entries(
-                                owner.catalog.entries(),
-                                query.get("imdbid", [""])[0],
-                                query.get("tmdbid", [""])[0],
-                            )
+                            imdb_id = query.get("imdbid", [""])[0]
+                            tmdb_id = query.get("tmdbid", [""])[0]
+                            if imdb_id or tmdb_id:
+                                entries = matching_movie_entries(
+                                    owner.catalog.entries(), imdb_id, tmdb_id
+                                )
+                            elif not query.get("q", [""])[0]:
+                                response_body = build_validation_feed(owner.external_url)
                         self.send_body(
                             200,
-                            build_feed(
-                                entries, owner.external_url, owner.api_key
-                            ),
+                            response_body
+                            or build_feed(entries, owner.external_url, owner.api_key),
                             "application/rss+xml",
                         )
                     else:

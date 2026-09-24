@@ -182,20 +182,30 @@ the obsolete qBittorrent entry is retained so the next scheduled run can retry s
 | `torznab_api_key` | none | Separate random key for this target's proxy. |
 | `preserve_on_failure` | `true` | Keep the old qBittorrent entry when replacement fails. |
 
-Add a separate **Generic Torznab** indexer to each Radarr using its matching route:
+Add a separate **Generic Torznab** indexer to each Radarr using its matching route.
+Radarr keeps the base URL and API path separate:
 
 ```text
-1080p Radarr URL:     http://CLEANER_HOST:9697/api
-1080p Radarr API key: TORZNAB_1080P_API_KEY
+1080p Radarr URL:       http://CLEANER_HOST:9697
+1080p Radarr API Path:  /api
+1080p Radarr API key:   TORZNAB_1080P_API_KEY
 
-4K Radarr URL:        http://CLEANER_HOST:9698/api
-4K Radarr API key:    TORZNAB_4K_API_KEY
+4K Radarr URL:          http://CLEANER_HOST:9698
+4K Radarr API Path:     /api
+4K Radarr API key:      TORZNAB_4K_API_KEY
 ```
 
+For these replacement-only indexers, disable **RSS** and **Automatic Search** and enable
+**Interactive Search**. The cleaner uses Radarr's movie release-search API to make the
+verified replacement discoverable only during that explicit search. Radarr's indexer
+connection test performs an identifier-less movie query even when RSS is disabled; the
+cleaner answers that validation request with one intentionally invalid placeholder item so
+the test succeeds, while normal RSS processing filters the placeholder out and real
+identifier-less searches still expose no replacement candidates.
+
 Each endpoint has an isolated replacement catalog, so one Radarr cannot discover another
-target's candidates. Enable movie search on both indexers. The daemon keeps the endpoints
-available continuously. Publish every configured port or use the cleaner's service name when
-the containers share a Docker network.
+target's candidates. The daemon keeps the endpoints available continuously. Publish every
+configured port or use the cleaner's service name when the containers share a Docker network.
 
 Start with `app.dry_run: true` and `radarr: []`. Confirm ordinary matching, then add and test
 the Radarr routes while still in dry-run. Only set `dry_run: false` after the logged route,

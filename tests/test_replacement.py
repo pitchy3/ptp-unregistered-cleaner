@@ -15,6 +15,7 @@ from ptp_unregistered_cleaner.torznab import (
     ReplacementCatalog,
     ReplacementServer,
     build_feed,
+    build_validation_feed,
 )
 
 
@@ -62,6 +63,16 @@ def test_feed_uses_real_title_and_server_side_download_url() -> None:
     assert f"http://cleaner:9697/download/{entry.guid}?apikey=proxy-secret" in feed
     assert "ApiKey" not in feed
     assert 'name="seeders" value="4"' in feed
+
+
+def test_validation_feed_has_one_non_downloadable_placeholder() -> None:
+    feed = build_validation_feed("http://cleaner:9697").decode()
+
+    assert "<item>" in feed
+    assert "<title></title>" in feed
+    assert "ptp-replacement-validation-placeholder" in feed
+    assert "http://cleaner:9697/validation-placeholder" in feed
+    assert "proxy-secret" not in feed
 
 
 def test_each_radarr_catalog_exposes_only_its_own_replacements() -> None:
@@ -133,8 +144,17 @@ def test_torznab_only_exposes_release_to_matching_movie_search() -> None:
     port = server._server.server_address[1]
     base = f"http://127.0.0.1:{port}/api?apikey=proxy-secret"
     with server, httpx.Client(trust_env=False) as client:
-        assert "Movie-GROUP" not in client.get(f"{base}&t=search").text
-        assert "Movie-GROUP" not in client.get(f"{base}&t=movie&q=Movie").text
+        generic = client.get(f"{base}&t=search").text
+        validation = client.get(f"{base}&t=movie&cat=2000&extended=1&offset=0&limit=100").text
+        title_search = client.get(f"{base}&t=movie&q=Movie").text
+
+        assert "Movie-GROUP" not in generic
+        assert "validation-placeholder" not in generic
+        assert "Movie-GROUP" not in validation
+        assert "ptp-replacement-validation-placeholder" in validation
+        assert "<title></title>" in validation
+        assert "Movie-GROUP" not in title_search
+        assert "validation-placeholder" not in title_search
         assert "Movie-GROUP" not in client.get(f"{base}&t=movie&imdbid=456").text
         assert (
             "Movie-GROUP"
