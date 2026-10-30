@@ -118,3 +118,40 @@ def test_fetch_page_redirect_error_masks_sensitive_location_params() -> None:
     assert "pw" not in message
     assert "session" not in message
     assert "auth-value" not in message
+
+
+def test_fetch_replacement_uses_movie_json_with_api_headers(monkeypatch) -> None:
+    import httpx
+
+    client = PtpClient(
+        PtpConfig(),
+        Credentials(ptp_api_user="user-id", ptp_api_key="secret-key"),
+    )
+    requests = []
+
+    def fake_get(url, *, params, headers, timeout):
+        requests.append((url, params, headers, timeout))
+        return FakeResponse(
+            payload={
+                "GroupId": "56",
+                "ImdbId": "1234567",
+                "Torrents": [
+                    {"Id": "34", "ReleaseName": "Movie-GROUP", "Size": "1234",
+                     "Seeders": "3", "Leechers": "1"},
+                ],
+            }
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    result = client.fetch_replacement("56", "34")
+
+    assert result.torrent_id == "34"
+    assert result.group_id == "56"
+    assert requests == [
+        (
+            "https://passthepopcorn.me/torrents.php",
+            {"id": "56", "torrentid": "34", "json": "1"},
+            {"ApiUser": "user-id", "ApiKey": "secret-key"},
+            client.config.timeout_seconds,
+        )
+    ]
