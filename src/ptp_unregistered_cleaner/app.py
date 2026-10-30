@@ -437,6 +437,21 @@ def run_daemon(config: Config | None = None) -> None:
                 time.sleep(min(300, remaining))
 
 
+
+def _poll_import_jobs(cfg: Config) -> None:
+    state = load_state(cfg.app.state_path)
+    jobs = dict(state.import_jobs)
+
+    def checkpoint(key: str, job: dict[str, object]) -> None:
+        jobs[key] = dict(job)
+        if not save_state(
+            cfg.app.state_path, dataclass_replace(state, import_jobs=dict(jobs))
+        ):
+            raise StateError("Unable to persist manual-import checkpoint")
+
+    poll_import_jobs(cfg.radarr, jobs, checkpoint)
+
+
 def _run_daemon_cleanup(
     config: Config,
     ptp_client: PtpClient | None = None,
