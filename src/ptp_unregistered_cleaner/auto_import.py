@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import PurePosixPath
 from typing import Any
 
 from .config import RadarrConfig
@@ -103,6 +104,21 @@ def advance_import(
         LOGGER.warning("Manual import requires exactly one candidate: movie_id=%s", job["movie_id"])
         return False
     candidate = candidates[0]
+    output_path = matched[0].get("outputPath")
+    source = candidate.get("path")
+    if (
+        not isinstance(output_path, str)
+        or not output_path.startswith("/")
+        or not isinstance(source, str)
+        or not source.startswith("/")
+        or ".." in PurePosixPath(source).parts
+        or (
+            source != output_path
+            and PurePosixPath(output_path) not in PurePosixPath(source).parents
+        )
+    ):
+        LOGGER.warning("Manual import source is outside matched download")
+        return False
     if not _candidate_is_safe(candidate, job, download_id):
         LOGGER.warning("Manual import candidate rejected by safety validation: movie_id=%s", job["movie_id"])
         return False
