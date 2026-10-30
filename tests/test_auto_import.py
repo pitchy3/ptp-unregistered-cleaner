@@ -63,6 +63,9 @@ class FakeRadarr:
         self.posted.append(payload)
         return 17
 
+    def download_was_imported(self, movie_id, download_id):
+        return movie_id == 290 and download_id == self.download_id
+
     def command(self, command_id):
         return {"id": command_id, "status": "completed"}
 
