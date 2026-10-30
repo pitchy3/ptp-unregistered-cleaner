@@ -33,6 +33,7 @@ radarr: []
 #     torznab_external_url: http://ptp-unregistered-cleaner:9697
 #     torznab_api_key: ${TORZNAB_1080P_API_KEY}
 #     preserve_on_failure: true
+#     auto_import_replacements: false
 #     allow_quality_policy_override: false
 #     allow_size_limit_override: false
 #   - name: movies-4k

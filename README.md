@@ -197,6 +197,7 @@ the obsolete qBittorrent entry is retained so the next scheduled run can retry s
 | `preserve_on_failure` | `true` | Keep the old qBittorrent entry when replacement fails. |
 | `allow_quality_policy_override` | `false` | Allow verified PTP trump grabs despite quality cutoff and upgrades-disabled rejections. |
 | `allow_size_limit_override` | `false` | Independently allow verified PTP trump grabs beyond Radarr's MB/min maximum. |
+| `auto_import_replacements` | `false` | Monitor previously grabbed PTP replacements via Radarr every five minutes and manually import exact finished downloads that Radarr rejects solely as quality downgrades. |
 
 Add a separate **Generic Torznab** indexer to each Radarr using its matching route.
 Radarr keeps the base URL and API path separate:
@@ -222,6 +223,14 @@ identifier-less searches still expose no replacement candidates.
 Each endpoint has an isolated replacement catalog, so one Radarr cannot discover another
 target's candidates. The daemon keeps the endpoints available continuously. Publish every
 configured port or use the cleaner's service name when the containers share a Docker network.
+
+Auto-import is opt-in and runs only in daemon mode after a successful replacement grab
+has created a durable import job. Manual-import submission bypasses Radarr's ordinary import
+approval, so only one verified candidate belonging to the matching Radarr download is
+eligible, and only when its sole rejection is the expected quality downgrade.
+The cleaner uses Radarr APIs only during monitoring; PTP remains on the normal cleanup
+interval. An uncertain submission is not repeated automatically and must be reviewed.
+Existing downloaded torrent files remain available for seeding.
 
 Start with `app.dry_run: true` and `radarr: []`. Confirm ordinary matching, then add and test
 the Radarr routes while still in dry-run. Only set `dry_run: false` after the logged route,

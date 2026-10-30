@@ -70,6 +70,7 @@ class RadarrConfig:
     preserve_on_failure: bool = True
     allow_quality_policy_override: bool = False
     allow_size_limit_override: bool = False
+    auto_import_replacements: bool = False
 
 
 @dataclass(frozen=True)
@@ -254,6 +255,7 @@ def radarr_without_secrets(config: RadarrConfig) -> dict[str, Any]:
         "preserve_on_failure": config.preserve_on_failure,
         "allow_quality_policy_override": config.allow_quality_policy_override,
         "allow_size_limit_override": config.allow_size_limit_override,
+        "auto_import_replacements": config.auto_import_replacements,
     }
 
 
@@ -308,6 +310,10 @@ def _load_radarr_configs(
             allow_quality_policy_override=_as_bool(
                 item.get("allow_quality_policy_override", False),
                 f"radarr entry {index} allow_quality_policy_override",
+            ),
+            auto_import_replacements=_as_bool(
+                item.get("auto_import_replacements", False),
+                f"radarr entry {index} auto_import_replacements",
             ),
             allow_size_limit_override=_as_bool(
                 item.get("allow_size_limit_override", False),

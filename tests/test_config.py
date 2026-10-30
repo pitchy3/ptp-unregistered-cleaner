@@ -200,3 +200,30 @@ def test_radarr_policy_overrides_default_off_and_are_independent(tmp_path: Path)
     config.write_text(yaml.safe_dump(base), encoding="utf-8")
     route = load_config(config, env).radarr[0]
     assert route.allow_size_limit_override
+
+
+def test_auto_import_is_opt_in_and_requires_boolean(tmp_path: Path) -> None:
+    import yaml
+
+    raw = {
+        "qbittorrent": [
+            {"name": "main", "url": "http://qbit", "username": "u", "password": "p"}
+        ],
+        "radarr": [{
+            "name": "movies", "url": "http://radarr", "api_key": "key",
+            "qbittorrent_instances": ["main"],
+            "torznab_external_url": "http://cleaner:9697",
+            "torznab_api_key": "key",
+        }],
+    }
+    path = tmp_path / "config.yaml"
+    env = {"PTP_API_USER": "u", "PTP_API_KEY": "k"}
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    assert not load_config(path, env).radarr[0].auto_import_replacements
+    raw["radarr"][0]["auto_import_replacements"] = True
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    assert load_config(path, env).radarr[0].auto_import_replacements
+    raw["radarr"][0]["auto_import_replacements"] = "true"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="auto_import_replacements must be a boolean"):
+        load_config(path, env)

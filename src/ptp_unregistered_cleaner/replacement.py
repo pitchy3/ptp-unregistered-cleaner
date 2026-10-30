@@ -24,8 +24,10 @@ class ReplacementCoordinator:
         self.ptp = ptp
         self.radarr = radarr
         self.catalog = catalog
+        self.last_import_context: dict[str, int | str] | None = None
 
     def replace(self, match: Match) -> str | None:
+        self.last_import_context = None
         replacement_id = match.ptp.replacement_torrent_id
         if replacement_id is None:
             return None
@@ -77,6 +79,11 @@ class ReplacementCoordinator:
             replacement_id,
             movie_id,
         )
+        self.last_import_context = {
+            "movie_id": movie_id,
+            "original_movie_file_id": int(movie["movieFileId"]),
+            "guid": entry.guid,
+        }
         return replacement_id
 
 

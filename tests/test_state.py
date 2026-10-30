@@ -91,3 +91,21 @@ def test_state_write_fsyncs_containing_directory(tmp_path: Path, monkeypatch) ->
     path = tmp_path / "state.json"
     assert save_state(path, State()) is True
     assert synced_directories == [tmp_path]
+
+
+def test_import_jobs_round_trip_and_rejects_malformed_mapping(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    job = {
+        "route": "movies",
+        "replacement_id": "34",
+        "movie_id": 1,
+        "original_movie_file_id": 10,
+        "guid": "ptp-replacement-34",
+        "phase": "pending",
+    }
+    state = State(import_jobs={"movies|old-hash": job})
+    assert save_state(path, state)
+    assert load_state(path).import_jobs == {"movies|old-hash": job}
+    path.write_text(state_module.json.dumps({"import_jobs": []}), encoding="utf-8")
+    with pytest.raises(StateError, match="import_jobs"):
+        load_state(path)

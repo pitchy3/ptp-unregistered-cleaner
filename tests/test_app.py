@@ -884,3 +884,49 @@ def test_cleanup_summary_reports_true_outcomes(tmp_path, monkeypatch, caplog) ->
     assert "replacements_requested=0" in caplog.text
     assert "removed=1" in caplog.text
     assert "files_deleted=0" in caplog.text
+
+
+def test_successful_grab_persists_auto_import_intent_before_cleanup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    match = app.Match(
+        "main", Torrent("old-hash", "Old Release"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="3",
+            reason_text=(
+                "Superior Source - "
+                "https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
+            ),
+        ),
+    )
+    route = RadarrConfig(
+        name="movies", url="http://radarr", api_key="key",
+        qbittorrent_instances=["main"], auto_import_replacements=True,
+    )
+
+    class Coordinator:
+        last_import_context = {
+            "movie_id": 290,
+            "original_movie_file_id": 19,
+            "guid": "ptp-replacement-30",
+        }
+
+        def replace(self, _match):
+            return "30"
+
+    requests = {}
+    jobs = {}
+    saved = []
+    monkeypatch.setattr(
+        app, "save_state",
+        lambda _path, state: saved.append(state) or True,
+    )
+    removable = app._request_replacements(
+        [match], [route], {"movies": Coordinator()}, _TrackerClient(),
+        "passthepopcorn", False, 1, requests, [],
+        set(), tmp_path / "state.json", {}, False, app.State(), Counter(), jobs,
+    )
+    assert removable == [match]
+    assert requests == {"movies|old-hash": "30"}
+    assert jobs["movies|old-hash"]["phase"] == "pending"
+    assert saved[0].import_jobs == jobs
