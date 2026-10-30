@@ -102,7 +102,7 @@ def test_import_submits_only_after_durable_intent():
             {"reason": "Unknown movie"},
         ]},
         {"rejections": []},
-        {"path": "/downloads/other"},
+        {"path": "/elsewhere/other"},
         {"languages": []},
     ],
 )
