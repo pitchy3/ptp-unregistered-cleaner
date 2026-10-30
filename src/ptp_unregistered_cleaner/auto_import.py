@@ -22,18 +22,13 @@ _DOWNGRADE = re.compile(
 def _download_candidate(
     client: RadarrClient, job: dict[str, Any]
 ) -> tuple[dict[str, Any], str] | None:
+    download_id = client.grabbed_download_id(job["movie_id"], job["guid"])
+    if not download_id:
+        return None
     matches = [
         item for item in client.queue_for_movie(job["movie_id"])
         if item.get("movieId") == job["movie_id"]
-        and str(item.get("downloadId") or "")
-        and (
-            item.get("downloadId") == job.get("download_id")
-            or (
-                not job.get("download_id")
-                and (item.get("downloadId") or "").lower()
-                == (job.get("expected_download_id") or "").lower()
-            )
-        )
+        and str(item.get("downloadId") or "").casefold() == download_id.casefold()
     ]
     if len(matches) != 1:
         return None
