@@ -138,6 +138,9 @@ radarr:
     torznab_port: 9697
     torznab_external_url: http://ptp-unregistered-cleaner:9697
     torznab_api_key: ${TORZNAB_1080P_API_KEY}
+    preserve_on_failure: true
+    allow_quality_policy_override: false
+    allow_size_limit_override: false
 
   - name: movies-4k
     url: http://radarr-4k:7878
@@ -168,10 +171,15 @@ Before any explicit Radarr grab, the cleaner:
 3. maps it to exactly one Radarr movie by IMDb/TMDb ID;
 4. publishes only that release through its authenticated local Torznab endpoint;
 5. asks Radarr to search/cache it and verifies the result maps back to that movie; and
-6. bypasses only Radarr's equal-preference/not-an-upgrade policy rejection.
+6. permits limited preference-based rejection exceptions; optionally bypasses cutoff and
+   upgrade-disabled rejections when `allow_quality_policy_override: true`, and optionally
+   bypasses the numeric file-size ceiling when `allow_size_limit_override: true`.
 
-Unknown rejections—including blocklist, quality-profile, custom-format, disk-space, or
-wrong-movie failures—are never bypassed. With `preserve_on_failure: true` (recommended),
+Both new overrides default to `false` and are configured per Radarr route; normal Radarr
+searches and quality profiles are unchanged. When enabled together, they permit the exact
+quality-cutoff, upgrades-disabled, and numeric maximum-size messages shown in PTP trump
+replacement logs. Unknown rejections—including blocklist, other quality-profile or custom-format
+rules, disk-space, or wrong-movie failures—are never bypassed. With `preserve_on_failure: true` (recommended),
 the obsolete qBittorrent entry is retained so the next scheduled run can retry safely.
 
 | Key | Default | Description |
@@ -187,6 +195,8 @@ the obsolete qBittorrent entry is retained so the next scheduled run can retry s
 | `torznab_external_url` | none | Proxy origin reachable from Radarr, without `/api`. |
 | `torznab_api_key` | none | Separate random key for this target's proxy. |
 | `preserve_on_failure` | `true` | Keep the old qBittorrent entry when replacement fails. |
+| `allow_quality_policy_override` | `false` | Allow verified PTP trump grabs despite quality cutoff and upgrades-disabled rejections. |
+| `allow_size_limit_override` | `false` | Independently allow verified PTP trump grabs beyond Radarr's MB/min maximum. |
 
 Add a separate **Generic Torznab** indexer to each Radarr using its matching route.
 Radarr keeps the base URL and API path separate:
