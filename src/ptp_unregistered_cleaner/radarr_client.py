@@ -118,6 +118,20 @@ class RadarrClient:
             raise RadarrClientError("Radarr returned unexpected command")
         return data
 
+    def download_was_imported(self, movie_id: int, download_id: str) -> bool:
+        payload = self._request(
+            "GET", "/history",
+            params={"movieId": movie_id, "page": 1, "pageSize": 100,
+                    "sortKey": "date", "sortDirection": "descending"},
+        )
+        return any(
+            _same_movie(record, movie_id)
+            and str(record.get("downloadId") or "").casefold() == download_id.casefold()
+            and str(record.get("eventType") or "").casefold()
+            == "downloadfolderimported"
+            for record in _records(payload, "history")
+        )
+
     def grabbed_download_id(self, movie_id: int, guid: str) -> str | None:
         payload = self._request(
             "GET", "/history",
