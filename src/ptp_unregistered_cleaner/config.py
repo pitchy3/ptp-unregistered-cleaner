@@ -68,6 +68,8 @@ class RadarrConfig:
     torznab_external_url: str = ""
     torznab_api_key: str = ""
     preserve_on_failure: bool = True
+    allow_quality_policy_override: bool = False
+    allow_size_limit_override: bool = False
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,13 @@ def _as_str_list(raw: Any, field_name: str) -> list[str]:
         return []
     if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
         raise ConfigError(f"{field_name} must be a list of strings")
+    return raw
+
+
+def _as_bool(raw: Any, field_name: str) -> bool:
+    """Require explicit YAML booleans for safety-sensitive policy overrides."""
+    if not isinstance(raw, bool):
+        raise ConfigError(f"{field_name} must be a boolean (true or false)")
     return raw
 
 
@@ -243,6 +252,8 @@ def radarr_without_secrets(config: RadarrConfig) -> dict[str, Any]:
         "torznab_port": config.torznab_port,
         "torznab_external_url": config.torznab_external_url,
         "preserve_on_failure": config.preserve_on_failure,
+        "allow_quality_policy_override": config.allow_quality_policy_override,
+        "allow_size_limit_override": config.allow_size_limit_override,
     }
 
 
@@ -294,6 +305,14 @@ def _load_radarr_configs(
             torznab_external_url=str(required["torznab_external_url"]).rstrip("/"),
             torznab_api_key=str(required["torznab_api_key"]),
             preserve_on_failure=bool(item.get("preserve_on_failure", True)),
+            allow_quality_policy_override=_as_bool(
+                item.get("allow_quality_policy_override", False),
+                f"radarr entry {index} allow_quality_policy_override",
+            ),
+            allow_size_limit_override=_as_bool(
+                item.get("allow_size_limit_override", False),
+                f"radarr entry {index} allow_size_limit_override",
+            ),
         )
         if not 1 <= config.torznab_port <= 65535:
             raise ConfigError(f"radarr entry {index} torznab_port must be between 1 and 65535")
