@@ -118,6 +118,24 @@ class RadarrClient:
             raise RadarrClientError("Radarr returned unexpected command")
         return data
 
+    def grabbed_download_id(self, movie_id: int, guid: str) -> str | None:
+        payload = self._request(
+            "GET", "/history",
+            params={"movieId": movie_id, "page": 1, "pageSize": 100,
+                    "sortKey": "date", "sortDirection": "descending"},
+        )
+        matches = [
+            str(item.get("downloadId") or "")
+            for item in _records(payload, "history")
+            if _same_movie(item, movie_id)
+            and str(item.get("eventType") or "").casefold() == "grabbed"
+            and _same_release(item, guid)
+        ]
+        matches = [item for item in matches if item]
+        if len(set(matches)) != 1:
+            return None
+        return matches[0]
+
     def manual_import(self, download_id: str) -> list[dict[str, Any]]:
         data = self._request("GET", "/manualimport", params={"downloadId": download_id})
         if not isinstance(data, list) or any(not isinstance(x, dict) for x in data):
