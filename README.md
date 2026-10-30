@@ -154,7 +154,12 @@ categories are supplied, only those categories use that Radarr. Unmapped torrent
 through ordinary unregistered cleanup without automatic replacement. Startup rejects unknown
 qBittorrent names, duplicate Radarr names/listeners, and overlapping routes.
 
-For a routed torrent, a numeric PTP `Reason` value is treated as PTP's designated successor.
+PTP `Reason` is a deletion-reason code, **not** a replacement torrent ID. For a routed
+trump, the cleaner extracts the exact successor `torrentid` from the PTP `ReasonText`
+link (for example, `Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34`).
+The link must point to PTP, contain one numeric successor ID, and match the old torrent's
+`GroupID`. Ambiguous, missing, or invalid trump links cause the torrent to be preserved,
+not deleted. All parsing is local; no inbox lookup is required.
 Before any explicit Radarr grab, the cleaner:
 
 1. fetches the successor's metadata from PTP;
