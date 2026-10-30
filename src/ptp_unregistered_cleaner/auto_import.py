@@ -33,7 +33,7 @@ def _download_candidate(
     if len(matches) != 1:
         return None
     item = matches[0]
-    if item.get("status") != "completed" or item.get("sizeleft") != 0:
+    if str(item.get("status") or "").casefold() not in {"completed", "warning"} or item.get("sizeleft") != 0:
         return None
     return item, str(item["downloadId"])
 
