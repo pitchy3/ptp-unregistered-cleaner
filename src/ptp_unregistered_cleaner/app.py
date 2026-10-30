@@ -21,7 +21,7 @@ from .config import (
 from .matcher import Match, find_matches, log_candidate, remove_matches, tracker_verified
 from .ptp_client import PtpClient
 from .qbittorrent_client import QBittorrentClient, QBittorrentClientError
-from .radarr_client import RadarrClient
+from .radarr_client import RadarrClient, RadarrReleaseRejectedError
 from .replacement import ReplacementCoordinator
 from .state import State, StateError, load_state, save_state, successful_state
 from .torznab import ReplacementCatalog, ReplacementServer
@@ -72,6 +72,7 @@ def run_once(
     unpersisted_checkpoints = set(volatile_requests)
     remaining_torrent_copies: Counter[str] = Counter()
     all_instances_processed = True
+    run_counts: Counter[str] = Counter()
 
     with ExitStack() as stack:
         active_coordinators = coordinators
@@ -99,6 +100,7 @@ def run_once(
                         skipped_state.append(
                             {"instance": instance.name, "hash": torrent.hash, "reason": reason}
                         )
+                    run_counts['candidates'] += len(matches)
                     for match in matches:
                         log_candidate(match)
                     matches = _request_replacements(
@@ -116,6 +118,7 @@ def run_once(
                         volatile_requests,
                         volatile_replacement_requests is None,
                         previous_state,
+                        run_counts,
                     )
                     remove_matches(
                         client,
@@ -127,10 +130,13 @@ def run_once(
                         skipped_results=skipped,
                     )
             except QBittorrentClientError:
+                run_counts['failed_instances'] += 1
                 all_instances_processed = False
                 LOGGER.exception(
                     "qBittorrent instance %s failed; skipping this instance", instance.name
                 )
+            run_counts['removed'] += len(removed)
+            run_counts['skipped'] += len(skipped)
             if removed:
                 removed_by_instance.setdefault(instance.name, []).extend(
                     match.torrent.hash for match in removed
@@ -171,7 +177,19 @@ def run_once(
             "Replacement checkpoints could not be persisted; preserving them in "
             "memory and aborting this cleanup run"
         )
-    LOGGER.info("Cleanup run completed successfully")
+    LOGGER.info(
+        "Cleanup run finished: candidates=%s replacements_requested=%s "
+        "replacement_failures=%s cap_skips=%s skipped=%s removed=%s "
+        "failed_instances=%s dry_run=%s files_deleted=0",
+        run_counts["candidates"],
+        run_counts["replacements_requested"],
+        run_counts["replacement_failures"],
+        run_counts["cap_skips"],
+        run_counts["skipped"],
+        run_counts["removed"],
+        run_counts["failed_instances"],
+        cfg.app.dry_run,
+    )
 
 
 def _prune_replacement_requests(
@@ -202,6 +220,7 @@ def _request_replacements(
     volatile_replacement_requests: dict[str, str] | None = None,
     retry_checkpoint_writes: bool = False,
     checkpoint_base_state: State | None = None,
+    run_counts: Counter[str] | None = None,
 ) -> list[Match]:
     removable: list[Match] = []
     live_processed = 0
@@ -221,7 +240,9 @@ def _request_replacements(
             continue
         if not dry_run and live_processed >= max_deletes_per_run:
             reason = f"max_deletes_per_run cap reached ({max_deletes_per_run})"
-            LOGGER.warning(
+            if run_counts is not None:
+                run_counts["cap_skips"] += 1
+            LOGGER.info(
                 "Skipping replacement and removal for %s on %s: %s",
                 match.torrent.hash,
                 match.instance_name,
@@ -292,6 +313,8 @@ def _request_replacements(
             continue
         try:
             coordinator.replace(match)
+            if run_counts is not None:
+                run_counts["replacements_requested"] += 1
             replacement_requests[checkpoint] = replacement_id
             if checkpoint_state_path is not None:
                 checkpoint_saved = save_state(
@@ -335,9 +358,24 @@ def _request_replacements(
                     skipped.append((match, reason))
                     continue
         except Exception as exc:
-            LOGGER.exception(
-                "Unable to request replacement %s for %s", replacement_id, match.torrent.hash
-            )
+            if run_counts is not None:
+                run_counts["replacement_failures"] += 1
+            if isinstance(exc, RadarrReleaseRejectedError):
+                LOGGER.warning(
+                    "Replacement skipped: torrent=%r instance=%s replacement_id=%s "
+                    "reason=%s original_preserved=%s",
+                    match.torrent.name,
+                    match.instance_name,
+                    replacement_id,
+                    exc,
+                    route.preserve_on_failure,
+                )
+            else:
+                LOGGER.exception(
+                    "Unable to request replacement %s for %s",
+                    replacement_id,
+                    match.torrent.hash,
+                )
             if route.preserve_on_failure:
                 skipped.append((match, f"replacement failed; preserved for retry: {exc}"))
                 continue

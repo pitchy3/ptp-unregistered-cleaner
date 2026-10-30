@@ -15,3 +15,8 @@ def configure_logging(level: str | None = None) -> None:
         stream=sys.stdout,
         force=True,
     )
+    # HTTP 200 request lines are diagnostics, not per-run operational events.
+    # Keep them accessible with LOG_LEVEL=DEBUG.
+    logging.getLogger("httpx").setLevel(
+        logging.DEBUG if selected == "DEBUG" else logging.WARNING
+    )
