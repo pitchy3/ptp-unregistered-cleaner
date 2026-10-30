@@ -3,7 +3,6 @@ from copy import deepcopy
 import pytest
 
 from ptp_unregistered_cleaner.auto_import import advance_import
-from ptp_unregistered_cleaner.radarr_client import RadarrClientError
 
 
 def job():
