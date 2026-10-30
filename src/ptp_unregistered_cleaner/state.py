@@ -36,6 +36,7 @@ class State:
     removed_hashes_by_instance: dict[str, list[str]] = field(default_factory=dict)
     skipped_hashes: list[dict[str, str]] = field(default_factory=list)
     replacement_requests: dict[str, str] = field(default_factory=dict)
+    import_jobs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> State:
@@ -47,7 +48,13 @@ class State:
             for key, value in raw_replacement_requests.items()
         ):
             raise StateError("State replacement_requests keys and values must be strings")
+        raw_jobs = data.get("import_jobs", {})
+        if not isinstance(raw_jobs, dict) or not all(
+            isinstance(k, str) and isinstance(v, dict) for k, v in raw_jobs.items()
+        ):
+            raise StateError("State import_jobs must contain keyed objects")
         return cls(
+            import_jobs=raw_jobs,
             last_successful_run_at=data.get("last_successful_run_at"),
             last_seen_infohashes_count=int(data.get("last_seen_infohashes_count", 0)),
             removed_hashes_by_instance={
@@ -72,6 +79,7 @@ class State:
             "removed_hashes_by_instance": self.removed_hashes_by_instance,
             "skipped_hashes": self.skipped_hashes,
             "replacement_requests": self.replacement_requests,
+            "import_jobs": self.import_jobs,
         }
 
 
@@ -125,6 +133,7 @@ def successful_state(
     removed_hashes_by_instance: dict[str, list[str]],
     skipped_hashes: list[dict[str, str]],
     replacement_requests: dict[str, str] | None = None,
+    import_jobs: dict[str, dict[str, Any]] | None = None,
 ) -> State:
     return State(
         last_successful_run_at=datetime.now(UTC).isoformat(),
@@ -132,4 +141,5 @@ def successful_state(
         removed_hashes_by_instance=removed_hashes_by_instance,
         skipped_hashes=skipped_hashes,
         replacement_requests=replacement_requests or {},
+        import_jobs=import_jobs or {},
     )
