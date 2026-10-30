@@ -148,12 +148,12 @@ def _safe_policy_rejection(
     }:
         return True
     if allow_quality and re.fullmatch(
-        r"existing file meets cutoff: [a-z0-9][a-z0-9 .+_-]* ?\\[\\]", normalized
+        r"existing file meets cutoff: [a-z0-9][a-z0-9 .+_-]* ?\[\]", normalized
     ):
         return True
     if allow_size and re.fullmatch(
-        r"\\d+(?:\\.\\d+)? (?:gb|mb|tb) is larger than maximum allowed "
-        r"\\d+(?:\\.\\d+)? (?:gb|mb|tb)", normalized
+        r"\d+(?:\.\d+)? (?:gb|mb|tb) is larger than maximum allowed "
+        r"\d+(?:\.\d+)? (?:gb|mb|tb)", normalized
     ):
         return True
     return False
