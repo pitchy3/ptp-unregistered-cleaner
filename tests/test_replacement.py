@@ -312,7 +312,11 @@ def test_coordinator_verifies_and_grabs_exact_release() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3",
+        reason_text=(
+            "Superior Source - "
+            "https://passthepopcorn.me/torrents.php?id=56&torrentid=34"
+        )),
     )
     result = ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match)
     assert result == "34"
@@ -356,7 +360,11 @@ def test_coordinator_adds_missing_imdb_id_from_matched_radarr_movie() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3",
+        reason_text=(
+            "Superior Source - "
+            "https://passthepopcorn.me/torrents.php?id=56&torrentid=34"
+        )),
     )
     assert ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match) == "34"
     assert catalog.entries() == []
@@ -391,7 +399,11 @@ def test_coordinator_reconciles_ambiguous_grab_failure() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3",
+        reason_text=(
+            "Superior Source - "
+            "https://passthepopcorn.me/torrents.php?id=56&torrentid=34"
+        )),
     )
     assert ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match) == "34"
     assert catalog.entries() == []
@@ -423,7 +435,11 @@ def test_coordinator_does_not_repeat_already_reconciled_grab() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3",
+        reason_text=(
+            "Superior Source - "
+            "https://passthepopcorn.me/torrents.php?id=56&torrentid=34"
+        )),
     )
     assert ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match) == "34"
     assert catalog.entries() == []
@@ -448,7 +464,11 @@ def test_coordinator_removes_release_from_catalog_when_radarr_rejects() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3",
+        reason_text=(
+            "Superior Source - "
+            "https://passthepopcorn.me/torrents.php?id=56&torrentid=34"
+        )),
     )
     catalog = ReplacementCatalog()
     with pytest.raises(RadarrClientError, match="wrong movie"):
