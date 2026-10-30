@@ -34,7 +34,10 @@ def _download_candidate(
     if len(matches) != 1:
         return None
     item = matches[0]
-    if str(item.get("status") or "").casefold() not in {"completed", "warning"} or item.get("sizeleft") != 0:
+    if (
+        str(item.get("status") or "").casefold() not in {"completed", "warning"}
+        or item.get("sizeleft") != 0
+    ):
         return None
     return item, str(item["downloadId"])
 
@@ -130,7 +133,10 @@ def advance_import(
         LOGGER.warning("Manual import source is outside matched download")
         return False
     if not _candidate_is_safe(candidate, job, download_id):
-        LOGGER.warning("Manual import candidate rejected by safety validation: movie_id=%s", job["movie_id"])
+        LOGGER.warning(
+            "Manual import candidate rejected by safety validation: movie_id=%s",
+            job["movie_id"],
+        )
         return False
 
     payload = {
@@ -146,7 +152,11 @@ def advance_import(
     command_id = client.submit_manual_import(payload)
     job.update(phase="submitted", command_id=command_id)
     checkpoint(job)
-    LOGGER.info("Submitted verified PTP manual import: movie_id=%s command_id=%s", job["movie_id"], command_id)
+    LOGGER.info(
+        "Submitted verified PTP manual import: movie_id=%s command_id=%s",
+        job["movie_id"],
+        command_id,
+    )
     return True
 
 
