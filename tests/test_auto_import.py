@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from ptp_unregistered_cleaner.auto_import import advance_import
+from ptp_unregistered_cleaner.auto_import import advance_import, poll_import_jobs
 
 
 def job():
@@ -140,3 +140,24 @@ def test_persistence_failure_prevents_post():
     with pytest.raises(RuntimeError, match="cannot save"):
         advance_import(client, item, fail)
     assert not client.posted
+
+
+def test_multiple_pending_jobs_for_one_movie_never_submit():
+    from ptp_unregistered_cleaner.config import RadarrConfig
+
+    first = job()
+    second = job()
+    second["replacement_id"] = "another"
+    second["guid"] = "ptp-replacement-another"
+    jobs = {"first": first, "second": second}
+    routes = [
+        RadarrConfig(
+            name="movies", url="http://example.invalid", api_key="key",
+            qbittorrent_instances=["main"], auto_import_replacements=True,
+        )
+    ]
+    poll_import_jobs(
+        routes, jobs,
+        lambda _key, _job: pytest.fail("Ambiguous jobs must not checkpoint"),
+    )
+    assert first["phase"] == second["phase"] == "pending"
