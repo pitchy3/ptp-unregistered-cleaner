@@ -422,7 +422,9 @@ def run_daemon(config: Config | None = None) -> None:
             )
         next_cleanup = time.monotonic() + interval_seconds
         while True:
-            if any(route.auto_import_replacements for route in cfg.radarr):
+            if not cfg.app.dry_run and any(
+                route.auto_import_replacements for route in cfg.radarr
+            ):
                 try:
                     _poll_import_jobs(cfg)
                 except Exception:
