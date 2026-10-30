@@ -50,6 +50,8 @@ def _candidate_is_safe(
         or item.get("downloadId") != download_id
         or not isinstance(item.get("path"), str)
         or not item["path"].startswith("/")
+        or type(item.get("size")) is not int
+        or item["size"] <= 0
         or not isinstance(item.get("quality"), dict)
         or not isinstance(item.get("languages"), list)
         or not item["languages"]
