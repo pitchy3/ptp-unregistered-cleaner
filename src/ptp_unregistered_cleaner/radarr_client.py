@@ -151,12 +151,14 @@ def _safe_policy_rejection(
         r"existing file meets cutoff: [a-z0-9][a-z0-9 .+_-]* ?\[\]", normalized
     ):
         return True
-    if allow_size and re.fullmatch(
-        r"\d+(?:\.\d+)? (?:gb|mb|tb) is larger than maximum allowed "
-        r"\d+(?:\.\d+)? (?:gb|mb|tb)", normalized
-    ):
-        return True
-    return False
+    return bool(
+        allow_size
+        and re.fullmatch(
+            r"\d+(?:\.\d+)? (?:gb|mb|tb) is larger than maximum allowed "
+            r"\d+(?:\.\d+)? (?:gb|mb|tb)",
+            normalized,
+        )
+    )
 
 
 def _records(payload: Any, response_name: str) -> list[dict[str, Any]]:
