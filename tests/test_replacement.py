@@ -19,11 +19,15 @@ from ptp_unregistered_cleaner.torznab import (
 )
 
 
-def test_reason_numeric_value_is_designated_replacement() -> None:
-    row = UnregisteredTorrent("hash", torrent_id="12", reason="34")
+def test_replacement_is_derived_from_reason_text_not_numeric_reason() -> None:
+    row = UnregisteredTorrent(
+        "hash", torrent_id="12", group_id="56", reason="3",
+        reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34",
+    )
     assert row.replacement_torrent_id == "34"
-    assert UnregisteredTorrent("hash", reason="Superior Source").replacement_torrent_id is None
-    assert UnregisteredTorrent("hash", torrent_id="12", reason="12").replacement_torrent_id is None
+    assert not row.has_invalid_replacement_reference
+    assert UnregisteredTorrent("hash", reason="3").replacement_torrent_id is None
+    assert UnregisteredTorrent("hash", reason="3").has_invalid_replacement_reference
 
 
 def test_extract_replacement_requires_expected_group() -> None:
@@ -308,7 +312,7 @@ def test_coordinator_verifies_and_grabs_exact_release() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
     )
     result = ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match)
     assert result == "34"
@@ -352,7 +356,7 @@ def test_coordinator_adds_missing_imdb_id_from_matched_radarr_movie() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
     )
     assert ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match) == "34"
     assert catalog.entries() == []
@@ -387,7 +391,7 @@ def test_coordinator_reconciles_ambiguous_grab_failure() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
     )
     assert ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match) == "34"
     assert catalog.entries() == []
@@ -419,7 +423,7 @@ def test_coordinator_does_not_repeat_already_reconciled_grab() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
     )
     assert ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match) == "34"
     assert catalog.entries() == []
@@ -444,9 +448,66 @@ def test_coordinator_removes_release_from_catalog_when_radarr_rejects() -> None:
     match = Match(
         "main",
         Torrent("hash", "old"),
-        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="34"),
+        UnregisteredTorrent("hash", torrent_id="12", group_id="56", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34"),
     )
     catalog = ReplacementCatalog()
     with pytest.raises(RadarrClientError, match="wrong movie"):
         ReplacementCoordinator(Ptp(), Radarr(), catalog).replace(match)
     assert catalog.entries() == []
+
+
+@pytest.mark.parametrize(
+    ("label", "group", "successor"),
+    [
+        ("Superior Source", "412976", "1553397"),
+        ("Superior Source", "204", "1553608"),
+        ("Superior Source", "714", "1555091"),
+        ("Superior Quality", "15513", "1551941"),
+        ("Superior Source", "423", "1551269"),
+    ],
+)
+def test_real_world_reason_text_shapes_are_parsed_offline(
+    label: str, group: str, successor: str
+) -> None:
+    record = UnregisteredTorrent(
+        "dummyhash", torrent_id="123", group_id=group, reason="3",
+        reason_text=(
+            f"{label} - "
+            f"https://passthepopcorn.me/torrents.php?id={group}&torrentid={successor}"
+        ),
+    )
+    assert record.replacement_torrent_id == successor
+    assert not record.has_invalid_replacement_reference
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Superior Source - https://evil.invalid/torrents.php?id=56&torrentid=34",
+        "Superior Source - https://passthepopcorn.me.evil.invalid/torrents.php?id=56&torrentid=34",
+        "Superior Source - http://passthepopcorn.me/torrents.php?id=56&torrentid=34",
+        "Superior Source - https://passthepopcorn.me/torrents.php?id=57&torrentid=34",
+        "Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=bad",
+        "Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=12",
+        "Superior Source - https://passthepopcorn.me/torrents.php?id=56",
+        "Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34&torrentid=35",
+        "Superior Source - https://passthepopcorn.me/torrents.php?id=56&torrentid=34 "
+        "https://passthepopcorn.me/torrents.php?id=56&torrentid=35",
+        "Superior Source - torrents.php?id=56&torrentid=34",
+    ],
+)
+def test_invalid_or_ambiguous_successor_is_never_used(text: str) -> None:
+    row = UnregisteredTorrent(
+        "hash", torrent_id="12", group_id="56", reason="3", reason_text=text
+    )
+    assert row.replacement_torrent_id is None
+    assert row.has_invalid_replacement_reference
+
+
+def test_normal_unregistered_row_without_successor_is_not_trump() -> None:
+    row = UnregisteredTorrent(
+        "hash", torrent_id="12", group_id="56", reason="1",
+        reason_text="Deleted for inactivity",
+    )
+    assert row.replacement_torrent_id is None
+    assert not row.has_invalid_replacement_reference
