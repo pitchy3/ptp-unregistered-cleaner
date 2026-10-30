@@ -782,3 +782,105 @@ def test_invalid_trump_reference_is_preserved_even_without_radarr_route(
     )
     assert removable == []
     assert skipped == [(match, "PTP replacement link missing or invalid; preserved for review")]
+
+
+def test_expected_radarr_rejection_warns_without_traceback(caplog) -> None:
+    from ptp_unregistered_cleaner.radarr_client import RadarrReleaseRejectedError
+
+    match = app.Match(
+        "main",
+        Torrent("old-hash", "Little Miss Sunshine"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="3",
+            reason_text=(
+                "Superior Source - "
+                "https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
+            ),
+        ),
+    )
+
+    class RejectedCoordinator:
+        def replace(self, _match):
+            raise RadarrReleaseRejectedError("size exceeds allowed maximum")
+
+    caplog.set_level(logging.WARNING)
+    skipped = []
+    counters = Counter()
+    removable = app._request_replacements(
+        [match], [_radarr_route()], {"movies": RejectedCoordinator()},
+        _TrackerClient(), "passthepopcorn", False, 1, {}, skipped,
+        run_counts=counters,
+    )
+    assert removable == []
+    assert counters["replacement_failures"] == 1
+    assert "Little Miss Sunshine" in caplog.text
+    assert "original_preserved=True" in caplog.text
+    assert "Traceback" not in caplog.text
+    assert "preserved for retry" in skipped[0][1]
+
+
+def test_unexpected_replacement_fault_keeps_traceback(caplog) -> None:
+    match = app.Match(
+        "main",
+        Torrent("old-hash", "Old Release"),
+        UnregisteredTorrent(
+            "old-hash", torrent_id="10", group_id="20", reason="3",
+            reason_text=(
+                "Superior Source - "
+                "https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
+            ),
+        ),
+    )
+
+    class BrokenCoordinator:
+        def replace(self, _match):
+            raise RuntimeError("unexpected bug")
+
+    caplog.set_level(logging.ERROR)
+    skipped = []
+    removable = app._request_replacements(
+        [match], [_radarr_route()], {"movies": BrokenCoordinator()},
+        _TrackerClient(), "passthepopcorn", False, 1, {}, skipped,
+    )
+    assert removable == []
+    assert "Traceback" in caplog.text
+    assert "unexpected bug" in caplog.text
+
+
+def test_cleanup_summary_reports_true_outcomes(tmp_path, monkeypatch, caplog) -> None:
+    class Ptp:
+        def fetch_unregistered(self):
+            return {"old-hash": UnregisteredTorrent("old-hash")}
+
+    class Qbit:
+        def __init__(self, _config):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def list_torrents(self):
+            return [Torrent("old-hash", "Old Release")]
+
+        def get_trackers(self, _hash):
+            return [Tracker("https://passthepopcorn.me/announce")]
+
+        def delete_torrent(self, _hash):
+            pass
+
+    config = Config(
+        app=AppConfig(dry_run=False, state_path=str(tmp_path / "state.json")),
+        ptp=PtpConfig(), matching=MatchingConfig(),
+        qbittorrent=[QBittorrentConfig("main", "http://main", "u", "p")],
+        credentials=Credentials("u", "k"),
+    )
+    monkeypatch.setattr(app, "QBittorrentClient", Qbit)
+    caplog.set_level(logging.INFO)
+    app.run_once(config, ptp_client=Ptp())
+    assert "candidates=1" in caplog.text
+    assert "replacements_requested=0" in caplog.text
+    assert "removed=1" in caplog.text
+    assert "files_deleted=0" in caplog.text
