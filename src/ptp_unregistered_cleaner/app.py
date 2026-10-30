@@ -420,12 +420,21 @@ def run_daemon(config: Config | None = None) -> None:
             _run_daemon_cleanup(
                 cfg, ptp_client, coordinators, volatile_replacement_requests
             )
+        next_cleanup = time.monotonic() + interval_seconds
         while True:
-            LOGGER.info("Sleeping %.0f seconds until next cleanup run", interval_seconds)
-            time.sleep(interval_seconds)
-            _run_daemon_cleanup(
-                cfg, ptp_client, coordinators, volatile_replacement_requests
-            )
+            if any(route.auto_import_replacements for route in cfg.radarr):
+                try:
+                    _poll_import_jobs(cfg)
+                except Exception:
+                    LOGGER.exception("Radarr import polling failed; retrying")
+            remaining = next_cleanup - time.monotonic()
+            if remaining <= 0:
+                _run_daemon_cleanup(
+                    cfg, ptp_client, coordinators, volatile_replacement_requests
+                )
+                next_cleanup = time.monotonic() + interval_seconds
+            else:
+                time.sleep(min(300, remaining))
 
 
 def _run_daemon_cleanup(
