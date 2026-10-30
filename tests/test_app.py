@@ -743,3 +743,42 @@ def test_intermediate_checkpoint_preserves_previous_run_summary(
             replacement_requests={"movies|old-hash": "30"},
         )
     ]
+
+
+@pytest.mark.parametrize(
+    "reason_text",
+    [
+        "Superior Source - https://passthepopcorn.me/torrents.php?id=21&torrentid=31",
+        "Superior Source - https://other.invalid/torrents.php?id=20&torrentid=30",
+        "Superior Source - torrents.php?id=20&torrentid=30",
+        "Superior Source",
+    ],
+)
+def test_invalid_trump_reference_is_preserved_even_without_radarr_route(
+    reason_text: str,
+) -> None:
+    match = app.Match(
+        "main",
+        Torrent("old-hash", "Old.Release", "manual"),
+        UnregisteredTorrent(
+            "old-hash",
+            torrent_id="10",
+            group_id="20",
+            reason="3",
+            reason_text=reason_text,
+        ),
+    )
+    skipped: list[tuple[app.Match, str]] = []
+    removable = app._request_replacements(
+        [match],
+        [],
+        {},
+        _TrackerClient(),
+        "passthepopcorn",
+        False,
+        25,
+        {},
+        skipped,
+    )
+    assert removable == []
+    assert skipped == [(match, "PTP replacement link missing or invalid; preserved for review")]
