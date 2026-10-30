@@ -10,6 +10,7 @@ from contextlib import ExitStack
 from dataclasses import replace as dataclass_replace
 from pathlib import Path
 
+from .auto_import import poll_import_jobs
 from .config import (
     Config,
     ConfigError,
@@ -67,6 +68,7 @@ def run_once(
         if volatile_replacement_requests is not None
         else {}
     )
+    import_jobs = dict(previous_state.import_jobs)
     replacement_requests = dict(previous_state.replacement_requests)
     replacement_requests.update(volatile_requests)
     unpersisted_checkpoints = set(volatile_requests)
@@ -119,6 +121,7 @@ def run_once(
                         volatile_replacement_requests is None,
                         previous_state,
                         run_counts,
+                        import_jobs,
                     )
                     remove_matches(
                         client,
@@ -168,6 +171,7 @@ def run_once(
             removed_hashes_by_instance=removed_by_instance,
             skipped_hashes=skipped_state,
             replacement_requests=replacement_requests,
+            import_jobs=import_jobs,
         ),
     )
     if final_state_saved:
@@ -221,6 +225,7 @@ def _request_replacements(
     retry_checkpoint_writes: bool = False,
     checkpoint_base_state: State | None = None,
     run_counts: Counter[str] | None = None,
+    import_jobs: dict[str, dict[str, object]] | None = None,
 ) -> list[Match]:
     removable: list[Match] = []
     live_processed = 0
@@ -313,6 +318,16 @@ def _request_replacements(
             continue
         try:
             coordinator.replace(match)
+            context = getattr(coordinator, "last_import_context", None)
+            if route.auto_import_replacements and import_jobs is not None and isinstance(context, dict):
+                import_jobs[checkpoint] = {
+                    "route": route.name,
+                    "replacement_id": replacement_id,
+                    "movie_id": context["movie_id"],
+                    "original_movie_file_id": context["original_movie_file_id"],
+                    "guid": context["guid"],
+                    "phase": "pending",
+                }
             if run_counts is not None:
                 run_counts["replacements_requested"] += 1
             replacement_requests[checkpoint] = replacement_id
@@ -322,6 +337,7 @@ def _request_replacements(
                     dataclass_replace(
                         checkpoint_base_state or State(),
                         replacement_requests=dict(replacement_requests),
+                        import_jobs=dict(import_jobs or {}),
                     ),
                 )
                 while not checkpoint_saved and retry_checkpoint_writes:
