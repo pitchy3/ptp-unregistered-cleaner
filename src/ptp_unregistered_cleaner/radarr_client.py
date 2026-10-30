@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -83,7 +84,14 @@ class RadarrClient:
             raise RadarrClientError(
                 "Radarr did not approve the replacement and provided no safe policy rejection"
             )
-        unsafe = [reason for reason in rejections if not _safe_policy_rejection(str(reason))]
+        unsafe = [
+            reason for reason in rejections
+            if not _safe_policy_rejection(
+                str(reason),
+                allow_quality=self.config.allow_quality_policy_override,
+                allow_size=self.config.allow_size_limit_override,
+            )
+        ]
         if unsafe:
             raise RadarrClientError(
                 "Refusing to bypass Radarr rejection(s): " + "; ".join(map(str, unsafe))
@@ -124,15 +132,31 @@ class RadarrClient:
         )
 
 
-def _safe_policy_rejection(reason: str) -> bool:
-    normalized = reason.casefold()
-    return any(
-        phrase in normalized
-        for phrase in (
-            "equal or higher preference",
-            "not an upgrade",
-            "repack downloading is disabled",
-            "repack for a different release group",
+def _safe_policy_rejection(
+    reason: str, *, allow_quality: bool = False, allow_size: bool = False
+) -> bool:
+    normalized = reason.strip().casefold()
+    if normalized in {
+        "existing file on disk is of equal or higher preference",
+        "not an upgrade",
+        "repack downloading is disabled",
+        "repack for a different release group",
+    }:
+        return True
+    if allow_quality and normalized in {
+        "existing file and the quality profile does not allow upgrades",
+    }:
+        return True
+    if allow_quality and re.fullmatch(
+        r"existing file meets cutoff: [a-z0-9][a-z0-9 .+_-]* ?\[\]", normalized
+    ):
+        return True
+    return bool(
+        allow_size
+        and re.fullmatch(
+            r"\d+(?:\.\d+)? (?:gb|mb|tb) is larger than maximum allowed "
+            r"\d+(?:\.\d+)? (?:gb|mb|tb)",
+            normalized,
         )
     )
 
