@@ -72,12 +72,19 @@ def advance_import(
         return False
     movie = client.movie(job["movie_id"])
     if movie.get("movieFileId") != job["original_movie_file_id"]:
-        if job.get("phase") in {"submitted", "submitting"}:
+        download_id = job.get("download_id")
+        if (
+            job.get("phase") == "submitted"
+            and isinstance(download_id, str)
+            and client.download_was_imported(job["movie_id"], download_id)
+        ):
             job["phase"] = "completed"
             checkpoint(job)
             LOGGER.info("PTP replacement import verified: movie_id=%s", job["movie_id"])
             return True
-        LOGGER.warning("Movie file changed outside import workflow; manual review needed")
+        LOGGER.warning(
+            "Movie file changed without confirmed matching import; manual review needed"
+        )
         return False
 
     if job.get("phase") == "submitting":
