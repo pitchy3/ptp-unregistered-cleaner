@@ -163,8 +163,23 @@ def advance_import(
 def poll_import_jobs(
     configs: list[RadarrConfig], jobs: dict[str, dict[str, Any]], checkpoint
 ) -> None:
-    routes = {route.name.casefold(): route for route in configs if route.auto_import_replacements}
+    routes = {
+        route.name.casefold(): route
+        for route in configs if route.auto_import_replacements
+    }
+    active_counts: dict[tuple[str, int], int] = {}
+    for job in jobs.values():
+        if job.get("phase") != "completed":
+            identity = (str(job.get("route", "")).casefold(), int(job["movie_id"]))
+            active_counts[identity] = active_counts.get(identity, 0) + 1
     for key, job in list(jobs.items()):
+        identity = (str(job.get("route", "")).casefold(), int(job["movie_id"]))
+        if active_counts.get(identity, 0) > 1:
+            LOGGER.warning(
+                "Multiple pending replacement jobs for movie_id=%s; manual review needed",
+                job["movie_id"],
+            )
+            continue
         route = routes.get(str(job.get("route", "")).casefold())
         if route is None or job.get("phase") == "completed":
             continue
