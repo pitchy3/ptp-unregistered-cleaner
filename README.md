@@ -162,7 +162,8 @@ The link must point to PTP, contain one numeric successor ID, and match the old 
 not deleted. All parsing is local; no inbox lookup is required.
 Before any explicit Radarr grab, the cleaner:
 
-1. fetches the successor's metadata from PTP;
+1. fetches the successor's metadata from PTP's `torrents.php` movie JSON endpoint,
+   selecting the exact `torrentid` from the group's `Torrents` array;
 2. verifies the successor belongs to the same PTP movie group;
 3. maps it to exactly one Radarr movie by IMDb/TMDb ID;
 4. publishes only that release through its authenticated local Torznab endpoint;
