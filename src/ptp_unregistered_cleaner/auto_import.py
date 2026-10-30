@@ -74,10 +74,11 @@ def advance_import(
         return False
     movie = client.movie(job["movie_id"])
     if movie.get("movieFileId") != job["original_movie_file_id"]:
-        download_id = job.get("download_id")
+        download_id = job.get("download_id") or client.grabbed_download_id(
+            job["movie_id"], job["guid"]
+        )
         if (
-            job.get("phase") == "submitted"
-            and isinstance(download_id, str)
+            isinstance(download_id, str)
             and client.download_was_imported(job["movie_id"], download_id)
         ):
             job["phase"] = "completed"
