@@ -50,9 +50,17 @@ class State:
             raise StateError("State replacement_requests keys and values must be strings")
         raw_jobs = data.get("import_jobs", {})
         if not isinstance(raw_jobs, dict) or not all(
-            isinstance(k, str) and isinstance(v, dict) for k, v in raw_jobs.items()
+            isinstance(k, str) and k and isinstance(v, dict)
+            and isinstance(v.get("route"), str) and v.get("route")
+            and isinstance(v.get("guid"), str) and v.get("guid")
+            and isinstance(v.get("replacement_id"), str) and v.get("replacement_id")
+            and type(v.get("movie_id")) is int and v["movie_id"] > 0
+            and type(v.get("original_movie_file_id")) is int
+            and v["original_movie_file_id"] > 0
+            and v.get("phase") in {"pending", "submitting", "submitted", "completed"}
+            for k, v in raw_jobs.items()
         ):
-            raise StateError("State import_jobs must contain keyed objects")
+            raise StateError("State import_jobs must contain validated keyed objects")
         return cls(
             import_jobs=raw_jobs,
             last_successful_run_at=data.get("last_successful_run_at"),
