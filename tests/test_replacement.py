@@ -30,28 +30,77 @@ def test_replacement_is_derived_from_reason_text_not_numeric_reason() -> None:
     assert UnregisteredTorrent("hash", reason="3").has_invalid_replacement_reference
 
 
-def test_extract_replacement_requires_expected_group() -> None:
+def test_extract_replacement_selects_exact_torrent_from_movie_json() -> None:
     payload = {
-        "response": {
-            "torrent": {
-                "Id": 34,
-                "GroupId": 56,
-                "ReleaseName": "Movie.2026.1080p.BluRay-GROUP",
-                "Size": 1234,
-                "Seeders": 4,
-                "Leechers": 2,
+        "GroupId": "56",
+        "ImdbId": "1234567",
+        "Torrents": [
+            {
+                "Id": "35",
+                "ReleaseName": "Other.Release",
+                "Size": "1000",
+                "Seeders": "2",
+                "Leechers": "0",
             },
-            "group": {"Id": 56, "ImdbId": "tt1234567", "TmdbId": 99},
-        }
+            {
+                "Id": "34",
+                "ReleaseName": "Movie.2026.1080p.BluRay-GROUP",
+                "Size": "1234",
+                "Seeders": "4",
+                "Leechers": "2",
+            },
+        ],
     }
     result = extract_replacement_torrent(payload, "56", "34")
+    assert result.torrent_id == "34"
+    assert result.group_id == "56"
     assert result.title == "Movie.2026.1080p.BluRay-GROUP"
+    assert result.size == 1234
     assert result.imdb_id == "tt1234567"
-    assert result.tmdb_id == "99"
     assert result.seeders == 4
     assert result.peers == 6
-    with pytest.raises(PtpClientError, match="not '57'"):
+    with pytest.raises(PtpClientError, match="expected '57'"):
         extract_replacement_torrent(payload, "57", "34")
+    with pytest.raises(PtpClientError, match="found 0"):
+        extract_replacement_torrent(payload, "56", "36")
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ({"GroupId": "57"}, "expected '56'"),
+        ({"Torrents": None}, "torrent list"),
+        ({"Torrents": []}, "found 0"),
+        ({"Torrents": [{"Id": "34"}, {"Id": "34"}]}, "found 2"),
+        ({"Torrents": [{"Id": "34", "Seeders": "0"}]}, "release name"),
+        (
+            {
+                "Torrents": [
+                    {"Id": "34", "ReleaseName": "release", "Size": 0, "Seeders": 3}
+                ]
+            },
+            "positive size",
+        ),
+        (
+            {
+                "Torrents": [
+                    {"Id": "34", "ReleaseName": "release", "Size": 123, "Seeders": 0}
+                ]
+            },
+            "no seeders",
+        ),
+    ],
+)
+def test_invalid_replacement_metadata_fails_closed(mutation, expected_error) -> None:
+    payload = {
+        "GroupId": "56",
+        "Torrents": [
+            {"Id": "34", "ReleaseName": "release", "Size": "123", "Seeders": "2"}
+        ],
+    }
+    payload.update(mutation)
+    with pytest.raises(PtpClientError, match=expected_error):
+        extract_replacement_torrent(payload, "56", "34")
 
 
 def test_feed_uses_real_title_and_server_side_download_url() -> None:

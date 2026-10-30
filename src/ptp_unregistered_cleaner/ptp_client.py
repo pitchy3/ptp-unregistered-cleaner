@@ -191,7 +191,7 @@ class PtpClient:
         """Fetch and validate a PTP-designated replacement torrent's metadata."""
         import httpx
 
-        url = urljoin(f"{self.config.base_url}/", "ajax.php")
+        url = urljoin(f"{self.config.base_url}/", "torrents.php")
         headers = {
             "ApiUser": self.credentials.ptp_api_user,
             "ApiKey": self.credentials.ptp_api_key,
@@ -199,7 +199,7 @@ class PtpClient:
         try:
             response = httpx.get(
                 url,
-                params={"action": "torrent", "id": torrent_id},
+                params={"id": group_id, "torrentid": torrent_id, "json": "1"},
                 headers=headers,
                 timeout=self.config.timeout_seconds,
             )
@@ -325,48 +325,52 @@ def _int_or_default(value: Any, default: int) -> int:
 def extract_replacement_torrent(
     payload: dict[str, Any], expected_group_id: str, expected_torrent_id: str
 ) -> ReplacementTorrent:
-    """Normalize PTP's torrent-detail response and enforce the same-group invariant."""
-    response = payload.get("response", payload)
-    if not isinstance(response, dict):
+    """Find the exact successor within PTP's movie-group JSON response."""
+    if not isinstance(payload, dict):
         raise PtpClientError("PTP replacement metadata response was not an object")
-    torrent = response.get("torrent", response.get("Torrent"))
-    group = response.get("group", response.get("Group", {}))
-    if not isinstance(torrent, dict):
-        raise PtpClientError("PTP replacement metadata did not include a torrent")
-    if not isinstance(group, dict):
-        group = {}
-
-    def pick(source: dict[str, Any], *keys: str) -> Any:
-        lowered = {str(key).lower(): value for key, value in source.items()}
-        return next((lowered[key.lower()] for key in keys if key.lower() in lowered), None)
-
-    actual_id = _optional_str(pick(torrent, "id", "torrentId"))
-    actual_group = _optional_str(
-        pick(torrent, "groupId", "movieId") or pick(group, "id", "groupId", "movieId")
-    )
-    if actual_id != expected_torrent_id:
-        raise PtpClientError(
-            f"PTP returned torrent {actual_id!r}, expected {expected_torrent_id!r}"
-        )
+    actual_group = _optional_str(payload.get("GroupId"))
     if actual_group != expected_group_id:
         raise PtpClientError(
-            f"Replacement torrent {actual_id} belongs to group {actual_group!r}, "
-            f"not {expected_group_id!r}"
+            f"PTP returned group {actual_group!r}, expected {expected_group_id!r}"
         )
-    title = _optional_str(pick(torrent, "releaseName", "release", "fileName", "name"))
+
+    torrents = payload.get("Torrents")
+    if not isinstance(torrents, list):
+        raise PtpClientError("PTP replacement metadata did not include a torrent list")
+    matches = [
+        torrent
+        for torrent in torrents
+        if isinstance(torrent, dict)
+        and _optional_str(torrent.get("Id")) == expected_torrent_id
+    ]
+    if len(matches) != 1:
+        raise PtpClientError(
+            f"Expected exactly one torrent {expected_torrent_id} in group "
+            f"{expected_group_id}; found {len(matches)}"
+        )
+    torrent = matches[0]
+    title = _optional_str(torrent.get("ReleaseName"))
     if not title:
         raise PtpClientError("PTP replacement metadata did not include a release name")
-    size = _int_or_default(pick(torrent, "size", "fileSize"), 0)
+    size = _int_or_default(torrent.get("Size"), 0)
     if size <= 0:
         raise PtpClientError("PTP replacement metadata did not include a positive size")
-    imdb = _optional_str(pick(group, "imdbId", "imdb"))
-    tmdb = _optional_str(pick(group, "tmdbId", "tmdb"))
-    seeders = _int_or_default(pick(torrent, "seeders"), 0)
-    leechers = _int_or_default(pick(torrent, "leechers"), 0)
+    seeders = _int_or_default(torrent.get("Seeders"), 0)
+    leechers = _int_or_default(torrent.get("Leechers"), 0)
     if seeders <= 0:
         raise PtpClientError("PTP replacement torrent has no seeders")
+
+    imdb = _optional_str(payload.get("ImdbId"))
+    tmdb = _optional_str(payload.get("TmdbId"))
     if imdb and imdb.isdigit():
         imdb = f"tt{imdb}"
     return ReplacementTorrent(
-        actual_id, actual_group, title, size, imdb, tmdb, seeders, seeders + leechers
+        expected_torrent_id,
+        actual_group,
+        title,
+        size,
+        imdb,
+        tmdb,
+        seeders,
+        seeders + leechers,
     )
