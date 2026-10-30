@@ -52,7 +52,8 @@ class FakeRadarr:
 
     def queue_for_movie(self, movie_id):
         return [{"movieId": movie_id, "downloadId": self.download_id,
-                 "status": self.status, "sizeleft": 0}]
+                 "status": self.status, "sizeleft": 0,
+                 "outputPath": "/downloads"}]
 
     def manual_import(self, download_id):
         assert download_id == self.download_id
@@ -77,7 +78,6 @@ def test_import_submits_only_after_durable_intent():
     assert advance_import(client, item, checkpoint)
     assert [s["phase"] for s in states] == ["submitting", "submitted"]
     assert len(client.posted) == 1
-    assert client.posted[0]["importMode"] if False else True
     assert client.posted[0]["downloadId"] == "abc123"
     assert client.posted[0]["movieId"] == 290
     assert not advance_import(client, item, checkpoint)
