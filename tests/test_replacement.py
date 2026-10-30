@@ -598,6 +598,45 @@ def test_normal_unregistered_row_without_successor_is_not_trump() -> None:
         ),
         (["Existing file and the Quality profile does not allow upgrades"], False, True, False),
         (["15.2 GB is larger than maximum allowed 10.0 GB"], False, True, True),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB (for Little Miss Sunshine)"],
+            False, True, True,
+        ),
+        (
+            ["24.8 GB is larger than maximum allowed 18.5 GB (for Magnolia)"],
+            False, True, True,
+        ),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB (for Little Miss Sunshine)"],
+            False, False, False,
+        ),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB (for Little Miss Sunshine)"],
+            True, False, False,
+        ),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB (for Little Miss Sunshine)",
+             "Existing file meets cutoff: HDTV-1080p []"],
+            True, True, True,
+        ),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB (for Little Miss Sunshine)",
+             "Release is blocklisted"],
+            True, True, False,
+        ),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB (for Little Miss Sunshine)"
+             "; Release is blocklisted"],
+            True, True, False,
+        ),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB (for Movie) extra"],
+            True, True, False,
+        ),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB (for Movie) (other)"],
+            True, True, False,
+        ),
         (["15.2 GB is larger than maximum allowed 10.0 GB"], True, False, False),
         (
             ["15.2 GB is larger than maximum allowed 10.0 GB",
