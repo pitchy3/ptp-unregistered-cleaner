@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from ptp_unregistered_cleaner.config import RadarrConfig
 from ptp_unregistered_cleaner.matcher import Match
 from ptp_unregistered_cleaner.ptp_client import (
     PtpClientError,
@@ -223,6 +224,10 @@ def test_torznab_only_exposes_release_to_matching_movie_search() -> None:
 
 def test_radarr_grab_only_bypasses_known_upgrade_policy(monkeypatch) -> None:
     client = object.__new__(RadarrClient)
+    client.config = RadarrConfig(
+        name="movies", url="http://example.invalid", api_key="key",
+        qbittorrent_instances=["main"],
+    )
     calls = []
     monkeypatch.setattr(client, "_request", lambda *args, **kwargs: calls.append((args, kwargs)))
     release = {
@@ -580,3 +585,98 @@ def test_normal_unregistered_row_without_successor_is_not_trump() -> None:
     )
     assert row.replacement_torrent_id is None
     assert not row.has_invalid_replacement_reference
+
+
+@pytest.mark.parametrize(
+    ("rejections", "quality", "size", "allowed"),
+    [
+        (["Existing file meets cutoff: HDTV-1080p []"], False, False, False),
+        (["Existing file meets cutoff: HDTV-1080p []"], True, False, True),
+        (
+            ["Existing file and the Quality profile does not allow upgrades"],
+            True, False, True,
+        ),
+        (["Existing file and the Quality profile does not allow upgrades"], False, True, False),
+        (["15.2 GB is larger than maximum allowed 10.0 GB"], False, True, True),
+        (["15.2 GB is larger than maximum allowed 10.0 GB"], True, False, False),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB",
+             "Existing file meets cutoff: HDTV-1080p []"],
+            True, True, True,
+        ),
+        (
+            ["15.2 GB is larger than maximum allowed 10.0 GB",
+             "Existing file meets cutoff: HDTV-1080p []"],
+            True, False, False,
+        ),
+        (["Release is blocklisted"], True, True, False),
+        (["Not enough free space"], True, True, False),
+        (["Custom format score below minimum"], True, True, False),
+        (["Mapped to wrong movie"], True, True, False),
+        (["Existing file meets cutoff: HDTV-1080p [] ; Release is blocklisted"],
+         True, True, False),
+        (["15.2 GB is larger than maximum allowed 10.0 GB; Release is blocklisted"],
+         True, True, False),
+        (["15.2 GB is larger than maximum allowed 10.0 GB"], False, False, False),
+    ],
+)
+def test_opt_in_policy_overrides_do_not_bypass_other_rejections(
+    monkeypatch, rejections, quality, size, allowed
+) -> None:
+    client = RadarrClient(
+        RadarrConfig(
+            name="movies", url="http://example.invalid", api_key="key",
+            qbittorrent_instances=["main"],
+            allow_quality_policy_override=quality,
+            allow_size_limit_override=size,
+        )
+    )
+    calls = []
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: calls.append((args, kwargs)))
+    release = {
+        "guid": "ptp-replacement-34",
+        "indexerId": 10,
+        "mappedMovieId": 7,
+        "downloadAllowed": True,
+        "rejections": rejections,
+    }
+    if allowed:
+        client.grab(release, 7)
+        assert len(calls) == 1
+        assert calls[0][0] == ("POST", "/release")
+    else:
+        with pytest.raises(RadarrClientError, match="Refusing to bypass"):
+            client.grab(release, 7)
+        assert calls == []
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"mappedMovieId": 8}, {"downloadAllowed": False},
+        {"rejections": "cutoff reached"},
+        {"rejections": []},
+    ],
+)
+def test_override_never_disables_release_invariants(monkeypatch, invalid) -> None:
+    client = RadarrClient(
+        RadarrConfig(
+            name="movies", url="http://example.invalid", api_key="key",
+            qbittorrent_instances=["main"],
+            allow_quality_policy_override=True,
+            allow_size_limit_override=True,
+        )
+    )
+    calls = []
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: calls.append((args, kwargs)))
+    release = {
+        "guid": "ptp-replacement-34",
+        "indexerId": 10,
+        "mappedMovieId": 7,
+        "downloadAllowed": True,
+        "rejections": ["Existing file meets cutoff: HDTV-1080p []"],
+    }
+    release.update(invalid)
+    with pytest.raises(RadarrClientError):
+        client.grab(release, 7)
+    assert calls == []
