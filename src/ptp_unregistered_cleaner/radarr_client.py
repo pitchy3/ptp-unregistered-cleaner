@@ -14,6 +14,10 @@ class RadarrClientError(RuntimeError):
     pass
 
 
+class RadarrReleaseRejectedError(RadarrClientError):
+    """An expected Radarr release policy rejection, not an operational fault."""
+
+
 class RadarrClient:
     def __init__(self, config: RadarrConfig) -> None:
         self.config = config
@@ -93,7 +97,7 @@ class RadarrClient:
             )
         ]
         if unsafe:
-            raise RadarrClientError(
+            raise RadarrReleaseRejectedError(
                 "Refusing to bypass Radarr rejection(s): " + "; ".join(map(str, unsafe))
             )
         self._request(
