@@ -319,7 +319,11 @@ def _request_replacements(
         try:
             coordinator.replace(match)
             context = getattr(coordinator, "last_import_context", None)
-            if route.auto_import_replacements and import_jobs is not None and isinstance(context, dict):
+            if (
+                route.auto_import_replacements
+                and import_jobs is not None
+                and isinstance(context, dict)
+            ):
                 import_jobs[checkpoint] = {
                     "route": route.name,
                     "replacement_id": replacement_id,
