@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from .config import Credentials, PtpConfig
 
 LOGGER = logging.getLogger(__name__)
 
 _REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+_REASON_URL_RE = re.compile(r"https?://[^\s<>\"\x27]+", re.IGNORECASE)
 _SENSITIVE_QUERY_PARAMS = {
     "apiuser",
     "apikey",
@@ -44,9 +46,52 @@ class UnregisteredTorrent:
 
     @property
     def replacement_torrent_id(self) -> str | None:
-        """Return PTP's designated successor only when Reason is a numeric torrent ID."""
-        value = (self.reason or "").strip()
-        return value if value.isdigit() and value != self.torrent_id else None
+        """Return the explicitly linked successor from PTP's ReasonText, if valid."""
+        if not self.group_id:
+            return None
+
+        urls = _REASON_URL_RE.findall(self.reason_text or "")
+        # Multiple links are ambiguous; never guess which torrent to request.
+        if len(urls) != 1:
+            return None
+        try:
+            link = urlsplit(urls[0].rstrip(".,;)]}"))
+        except ValueError:
+            return None
+        if (
+            link.scheme.lower() != "https"
+            or link.hostname != "passthepopcorn.me"
+            or link.username is not None
+            or link.password is not None
+            or link.path != "/torrents.php"
+        ):
+            return None
+
+        params = parse_qs(link.query)
+        group_ids = params.get("id", [])
+        torrent_ids = params.get("torrentid", [])
+        if len(group_ids) != 1 or len(torrent_ids) != 1:
+            return None
+        group_id, torrent_id = group_ids[0], torrent_ids[0]
+        if (
+            not group_id.isdigit()
+            or group_id != self.group_id
+            or not torrent_id.isdigit()
+            or torrent_id == self.torrent_id
+        ):
+            return None
+        return torrent_id
+
+    @property
+    def has_invalid_replacement_reference(self) -> bool:
+        """Preserve trumped torrents if their successor link is missing or unsafe."""
+        reason_text = self.reason_text or ""
+        return self.replacement_torrent_id is None and (
+            (self.reason or "").strip() == "3"
+            or bool(_REASON_URL_RE.search(reason_text))
+            or "torrents.php" in reason_text.lower()
+            or "torrentid=" in reason_text.lower()
+        )
 
 
 @dataclass(frozen=True)
