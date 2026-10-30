@@ -158,7 +158,7 @@ def test_failed_replacement_is_preserved_for_retry() -> None:
         "main",
         Torrent("old-hash", "Old.Release"),
         UnregisteredTorrent(
-            "old-hash", torrent_id="10", group_id="20", reason="30"
+            "old-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
         ),
     )
 
@@ -189,7 +189,7 @@ def test_checkpointed_replacement_is_not_requested_twice() -> None:
         "main",
         Torrent("OLD-HASH", "Old.Release"),
         UnregisteredTorrent(
-            "old-hash", torrent_id="10", group_id="20", reason="30"
+            "old-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
         ),
     )
 
@@ -247,14 +247,14 @@ def test_replacements_are_isolated_by_category_and_radarr_target() -> None:
             "shared",
             Torrent("hd-hash", "HD", "radarr"),
             UnregisteredTorrent(
-                "hd-hash", torrent_id="10", group_id="20", reason="30"
+                "hd-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
             ),
         ),
         app.Match(
             "shared",
             Torrent("uhd-hash", "UHD", "radarr-4k"),
             UnregisteredTorrent(
-                "uhd-hash", torrent_id="11", group_id="21", reason="31"
+                "uhd-hash", torrent_id="11", group_id="21", reason="3", reason_text="Superior Quality - https://passthepopcorn.me/torrents.php?id=21&torrentid=31"
             ),
         ),
     ]
@@ -280,7 +280,7 @@ def test_unmapped_category_does_not_use_a_radarr_coordinator() -> None:
         "main",
         Torrent("old-hash", "Old.Release", "manual"),
         UnregisteredTorrent(
-            "old-hash", torrent_id="10", group_id="20", reason="30"
+            "old-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
         ),
     )
     removable = app._request_replacements(
@@ -312,7 +312,7 @@ def test_zero_cleanup_cap_does_not_request_replacement() -> None:
         "main",
         Torrent("old-hash", "Old.Release"),
         UnregisteredTorrent(
-            "old-hash", torrent_id="10", group_id="20", reason="30"
+            "old-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
         ),
     )
 
@@ -363,7 +363,7 @@ def test_failed_checkpoint_write_preserves_replaced_torrent(
         def fetch_unregistered(self):
             return {
                 "old-hash": UnregisteredTorrent(
-                    "old-hash", torrent_id="10", group_id="20", reason="30"
+                    "old-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
                 )
             }
 
@@ -431,7 +431,7 @@ def test_failed_checkpoint_write_preserves_later_instance_copy(
         def fetch_unregistered(self):
             return {
                 "old-hash": UnregisteredTorrent(
-                    "old-hash", torrent_id="10", group_id="20", reason="30"
+                    "old-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
                 )
             }
 
@@ -526,14 +526,14 @@ def test_each_replacement_is_checkpointed_before_processing_the_next(
             "main",
             Torrent("first-hash", "First.Release"),
             UnregisteredTorrent(
-                "first-hash", torrent_id="10", group_id="20", reason="30"
+                "first-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
             ),
         ),
         app.Match(
             "main",
             Torrent("second-hash", "Second.Release"),
             UnregisteredTorrent(
-                "second-hash", torrent_id="11", group_id="21", reason="31"
+                "second-hash", torrent_id="11", group_id="21", reason="3", reason_text="Superior Quality - https://passthepopcorn.me/torrents.php?id=21&torrentid=31"
             ),
         ),
     ]
@@ -574,7 +574,7 @@ def test_failed_tracker_verification_never_reaches_removal() -> None:
         "main",
         Torrent("old-hash", "Old.Release"),
         UnregisteredTorrent(
-            "old-hash", torrent_id="10", group_id="20", reason="30"
+            "old-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
         ),
     )
     tracker_client = ChangingTrackerClient()
@@ -604,7 +604,7 @@ def test_one_shot_retries_checkpoint_until_it_is_durable(
         "main",
         Torrent("old-hash", "Old.Release"),
         UnregisteredTorrent(
-            "old-hash", torrent_id="10", group_id="20", reason="30"
+            "old-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
         ),
     )
     save_results = iter([False, False, True])
@@ -651,7 +651,7 @@ def test_intermediate_checkpoint_preserves_previous_run_summary(
         "main",
         Torrent("old-hash", "Old.Release"),
         UnregisteredTorrent(
-            "old-hash", torrent_id="10", group_id="20", reason="30"
+            "old-hash", torrent_id="10", group_id="20", reason="3", reason_text="Superior Source - https://passthepopcorn.me/torrents.php?id=20&torrentid=30"
         ),
     )
 
