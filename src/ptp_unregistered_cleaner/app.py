@@ -18,7 +18,7 @@ from .config import (
     radarr_route,
     sanitized_config_summary,
 )
-from .matcher import Match, find_matches, remove_matches, tracker_verified
+from .matcher import Match, find_matches, log_candidate, remove_matches, tracker_verified
 from .ptp_client import PtpClient
 from .qbittorrent_client import QBittorrentClient, QBittorrentClientError
 from .radarr_client import RadarrClient
@@ -99,6 +99,8 @@ def run_once(
                         skipped_state.append(
                             {"instance": instance.name, "hash": torrent.hash, "reason": reason}
                         )
+                    for match in matches:
+                        log_candidate(match)
                     matches = _request_replacements(
                         matches,
                         cfg.radarr,
@@ -228,6 +230,16 @@ def _request_replacements(
             skipped.append((match, reason))
             continue
         replacement_id = match.ptp.replacement_torrent_id
+        if match.ptp.has_invalid_replacement_reference:
+            reason = "PTP replacement link missing or invalid; preserved for review"
+            LOGGER.warning(
+                "Skipping replacement and removal for %s on %s: %s",
+                match.torrent.hash,
+                match.instance_name,
+                reason,
+            )
+            skipped.append((match, reason))
+            continue
         if replacement_id is None:
             removable.append(match)
             if not dry_run:
