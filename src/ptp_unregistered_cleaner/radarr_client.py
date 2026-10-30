@@ -106,6 +106,39 @@ class RadarrClient:
             json={"guid": release["guid"], "indexerId": release["indexerId"]},
         )
 
+    def movie(self, movie_id: int) -> dict[str, Any]:
+        data = self._request("GET", f"/movie/{movie_id}")
+        if not isinstance(data, dict) or data.get("id") != movie_id:
+            raise RadarrClientError("Radarr returned unexpected movie")
+        return data
+
+    def command(self, command_id: int) -> dict[str, Any]:
+        data = self._request("GET", f"/command/{command_id}")
+        if not isinstance(data, dict) or data.get("id") != command_id:
+            raise RadarrClientError("Radarr returned unexpected command")
+        return data
+
+    def manual_import(self, download_id: str) -> list[dict[str, Any]]:
+        data = self._request("GET", "/manualimport", params={"downloadId": download_id})
+        if not isinstance(data, list) or any(not isinstance(x, dict) for x in data):
+            raise RadarrClientError("Radarr returned malformed manual-import candidates")
+        return data
+
+    def submit_manual_import(self, file: dict[str, Any]) -> int:
+        data = self._request("POST", "/command", json={
+            "name": "ManualImport", "importMode": "copy", "files": [file],
+        })
+        if not isinstance(data, dict) or type(data.get("id")) is not int:
+            raise RadarrClientError("Radarr did not return a manual-import command ID")
+        return data["id"]
+
+    def queue_for_movie(self, movie_id: int) -> list[dict[str, Any]]:
+        payload = self._request(
+            "GET", "/queue",
+            params={"movieIds": movie_id, "page": 1, "pageSize": 100},
+        )
+        return _records(payload, "queue")
+
     def replacement_was_grabbed(self, movie_id: int, guid: str) -> bool:
         """Reconcile an uncertain grab against Radarr's queue and history."""
         queue = self._request(
