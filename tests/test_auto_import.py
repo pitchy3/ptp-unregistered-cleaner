@@ -21,6 +21,7 @@ def candidate():
         "path": "/downloads/Little.Miss.Sunshine.2006.1080p.mkv",
         "folderName": "Little.Miss.Sunshine",
         "downloadId": "abc123",
+        "size": 1000000,
         "movie": {"id": 290},
         "quality": {"quality": {"id": 3}},
         "languages": [{"id": 1}],
