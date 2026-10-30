@@ -97,7 +97,6 @@ def remove_matches(
 
     live_processed = len(removed)
     for match in matches:
-        _log_candidate(match)
         if not tracker_verified(client, match.torrent.hash, require_tracker_contains):
             reason = (
                 "tracker verification failed; "
@@ -131,7 +130,7 @@ def remove_matches(
     return removed, skipped
 
 
-def _log_candidate(match: Match) -> None:
+def log_candidate(match: Match) -> None:
     LOGGER.info(
         "Candidate match: instance=%s torrent_name=%r torrent_hash=%s ptp_file_name=%r "
         "ptp_torrent_id=%r ptp_reason_text=%r ptp_deleted_time=%r",
