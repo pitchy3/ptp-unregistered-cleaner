@@ -141,3 +141,62 @@ def test_radarr_torznab_ports_must_be_unique_across_bind_hosts(tmp_path: Path) -
     )
     with pytest.raises(ConfigError, match="Multiple radarr entries use Torznab port 9697"):
         load_config(config, {"PTP_API_USER": "user", "PTP_API_KEY": "key"})
+
+
+@pytest.mark.parametrize("value", ["true", "yes", "1", 1, None])
+def test_radarr_policy_override_requires_explicit_yaml_boolean(
+    tmp_path: Path, value
+) -> None:
+    import yaml
+
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({
+        "qbittorrent": [
+            {"name": "main", "url": "http://example", "username": "u", "password": "p"}
+        ],
+        "radarr": [
+            {
+                "name": "movies", "url": "http://radarr", "api_key": "key",
+                "qbittorrent_instances": ["main"],
+                "torznab_external_url": "http://cleaner:9697",
+                "torznab_api_key": "key",
+                "allow_quality_policy_override": value,
+            }
+        ],
+    }), encoding="utf-8")
+    with pytest.raises(ConfigError, match="allow_quality_policy_override must be a boolean"):
+        load_config(config, {"PTP_API_USER": "user", "PTP_API_KEY": "key"})
+
+
+def test_radarr_policy_overrides_default_off_and_are_independent(tmp_path: Path) -> None:
+    import yaml
+
+    base = {
+        "qbittorrent": [
+            {"name": "main", "url": "http://example", "username": "u", "password": "p"}
+        ],
+        "radarr": [
+            {
+                "name": "movies", "url": "http://radarr", "api_key": "key",
+                "qbittorrent_instances": ["main"],
+                "torznab_external_url": "http://cleaner:9697",
+                "torznab_api_key": "key",
+            }
+        ],
+    }
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump(base), encoding="utf-8")
+    env = {"PTP_API_USER": "user", "PTP_API_KEY": "key"}
+    route = load_config(config, env).radarr[0]
+    assert not route.allow_quality_policy_override
+    assert not route.allow_size_limit_override
+
+    base["radarr"][0]["allow_quality_policy_override"] = True
+    config.write_text(yaml.safe_dump(base), encoding="utf-8")
+    route = load_config(config, env).radarr[0]
+    assert route.allow_quality_policy_override
+    assert not route.allow_size_limit_override
+    base["radarr"][0]["allow_size_limit_override"] = True
+    config.write_text(yaml.safe_dump(base), encoding="utf-8")
+    route = load_config(config, env).radarr[0]
+    assert route.allow_size_limit_override
