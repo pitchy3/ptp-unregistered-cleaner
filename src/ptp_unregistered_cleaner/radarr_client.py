@@ -155,7 +155,7 @@ def _safe_policy_rejection(
         allow_size
         and re.fullmatch(
             r"\d+(?:\.\d+)? (?:gb|mb|tb) is larger than maximum allowed "
-            r"\d+(?:\.\d+)? (?:gb|mb|tb)",
+            r"\d+(?:\.\d+)? (?:gb|mb|tb)(?: \(for [^\r\n()]+\))?",
             normalized,
         )
     )
